@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: rbgs
+      POSTGRES_USER: rbgs
+      POSTGRES_PASSWORD: ${RBGS_DB_PASSWORD:?Set RBGS_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${RBGS_DB_PORT:-55432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rbgs -d rbgs"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres_data:

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.rbgs.io/contracts/evidence/v1.schema.json",
+  "$comment": "Provisional envelope for feature 01. Feature 06 must validate it against real Forever match fixtures before ranked use.",
+  "title": "rbgs.io match evidence v1",
+  "type": "object",
+  "required": ["schemaVersion", "matchId", "assignmentId", "observedCharacter", "client"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "matchId": { "type": "string", "format": "uuid" },
+    "assignmentId": { "type": "string", "format": "uuid" },
+    "observedCharacter": {
+      "type": "object",
+      "required": ["name", "realm"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "realm": { "type": "string", "minLength": 1 },
+        "guid": { "type": ["string", "null"] }
+      }
+    },
+    "client": {
+      "type": "object",
+      "required": ["addonVersion", "gameBuild"],
+      "additionalProperties": false,
+      "properties": {
+        "addonVersion": { "type": "string" },
+        "gameBuild": { "type": "string" }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "required": ["map", "startedAt", "endedAt", "roster", "outcome"],
+      "additionalProperties": false,
+      "properties": {
+        "map": { "type": "string" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "endedAt": { "type": "string", "format": "date-time" },
+        "roster": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "realm", "team"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "realm": { "type": "string" },
+              "guid": { "type": ["string", "null"] },
+              "team": { "type": "string" },
+              "damage": { "type": ["integer", "null"], "minimum": 0 },
+              "healing": { "type": ["integer", "null"], "minimum": 0 },
+              "honorableKills": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        },
+        "outcome": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

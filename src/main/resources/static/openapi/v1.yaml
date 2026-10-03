@@ -1,0 +1,39 @@
+openapi: 3.1.0
+info:
+  title: rbgs.io API
+  version: 1.0.0
+  description: Foundation contract. Other product endpoints are added with their owning features.
+servers:
+  - url: /api/v1
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Check API availability
+      responses:
+        '200':
+          description: API process is serving requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+components:
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string

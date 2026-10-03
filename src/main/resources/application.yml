@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: rbgs-api
+  datasource:
+    url: ${RBGS_DB_URL:jdbc:postgresql://localhost:55432/rbgs}
+    username: ${RBGS_DB_USER:rbgs}
+    password: ${RBGS_DB_PASSWORD}
+  flyway:
+    enabled: true
+    schemas: rbgs
+    default-schema: rbgs
+  mvc:
+    problemdetails:
+      enabled: true
+
+server:
+  port: ${RBGS_API_PORT:8080}
+
+management:
+  server:
+    port: ${RBGS_MANAGEMENT_PORT:8081}
+    address: ${RBGS_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: never

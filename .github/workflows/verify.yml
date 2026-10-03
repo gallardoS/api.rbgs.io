@@ -1,0 +1,30 @@
+name: Verify backend
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_DB: rbgs
+          POSTGRES_USER: rbgs
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U rbgs -d rbgs"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      RBGS_DB_PASSWORD: ci-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify
+        run: bash ./mvnw -B verify
