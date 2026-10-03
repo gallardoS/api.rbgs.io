@@ -1,28 +1,78 @@
 package io.rbgs.api.foundation;
 
 import java.io.IOException;
+import java.util.List;
 
+import io.rbgs.api.identity.Account;
+import io.rbgs.api.identity.AccountRepository;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 
 @Configuration
 public class SecurityConfiguration {
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http,
+            ObjectProvider<ClientRegistrationRepository> registrations,
+            ObjectProvider<AccountRepository> accountRepositories,
+            @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/api/v1/health", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
+                .requestMatchers("/api/v1/auth/me").permitAll()
+                .requestMatchers("/api/v1/moderation/**").hasRole("MODERATOR")
                 .anyRequest().denyAll());
+        http.csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()));
         http.httpBasic(AbstractHttpConfigurer::disable);
         http.formLogin(AbstractHttpConfigurer::disable);
         http.exceptionHandling(exceptions -> exceptions
                 .authenticationEntryPoint((request, response, error) -> writeProblem(response, 401, "Unauthorized"))
                 .accessDeniedHandler((request, response, error) -> writeProblem(response, 403, "Forbidden")));
+
+        if (registrations.getIfAvailable() != null) {
+            String successUrl = webOrigin.isBlank() ? "/" : webOrigin + "/";
+            String failureUrl = webOrigin.isBlank() ? "/?auth=failed" : webOrigin + "/?auth=failed";
+            AccountRepository accounts = accountRepositories.getObject();
+            OidcUserService delegate = new OidcUserService();
+            http.oauth2Login(login -> login
+                    .userInfoEndpoint(userInfo -> userInfo.oidcUserService(request -> {
+                        var user = delegate.loadUser(request);
+                        String issuer = user.getIdToken().getIssuer().toString();
+                        String subject = user.getSubject();
+                        String displayName = user.getClaimAsString("battletag");
+                        if (displayName == null || displayName.isBlank()) {
+                            displayName = "Battle.net player";
+                        }
+                        if (displayName.length() > 100) {
+                            throw new OAuth2AuthenticationException(new OAuth2Error("invalid_user_info"));
+                        }
+                        Account account = accounts.upsert(issuer, subject, displayName);
+                        if (!"ACTIVE".equals(account.status())) {
+                            throw new OAuth2AuthenticationException(new OAuth2Error("account_suspended"));
+                        }
+                        return new DefaultOidcUser(
+                                List.of(new SimpleGrantedAuthority("ROLE_" + account.role())),
+                                user.getIdToken(), user.getUserInfo(), "sub");
+                    }))
+                    .defaultSuccessUrl(successUrl, true)
+                    .failureUrl(failureUrl));
+            http.logout(logout -> logout.logoutUrl("/api/v1/auth/logout")
+                    .logoutSuccessHandler((request, response, authentication) -> response.setStatus(204)));
+        }
         return http.build();
     }
 

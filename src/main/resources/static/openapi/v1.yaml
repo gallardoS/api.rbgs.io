@@ -2,10 +2,38 @@ openapi: 3.1.0
 info:
   title: rbgs.io API
   version: 1.0.0
-  description: Foundation contract. Other product endpoints are added with their owning features.
+  description: Foundation and Battle.net session contract. Other product endpoints are added with their owning features.
 servers:
   - url: /api/v1
 paths:
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Get the current rbgs.io account and establish a CSRF cookie
+      description: Returns no content when the browser has no authenticated session. Never returns provider tokens.
+      responses:
+        '200':
+          description: Authenticated account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '204':
+          description: No authenticated session
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Invalidate the browser session
+      description: Requires the X-XSRF-TOKEN header copied from the XSRF-TOKEN cookie.
+      responses:
+        '204':
+          description: Session invalidated
+        '403':
+          description: Missing or invalid CSRF token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /health:
     get:
       operationId: getHealth
@@ -24,6 +52,21 @@ paths:
                     const: ok
 components:
   schemas:
+    Profile:
+      type: object
+      required: [id, displayName, region, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        region:
+          type: string
+          const: EU
+        role:
+          type: string
+          enum: [USER, MODERATOR]
     Problem:
       type: object
       required: [type, title, status]

@@ -15,6 +15,12 @@ spring:
 
 server:
   port: ${RBGS_API_PORT:8080}
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${RBGS_SECURE_COOKIES:true}
 
 management:
   server:
