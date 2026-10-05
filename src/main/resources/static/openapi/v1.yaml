@@ -9,8 +9,8 @@ paths:
   /characters/me:
     get:
       operationId: getCurrentUserCharacters
-      summary: Get the authenticated user's WoW accounts and characters in EU
-      description: Requires a Battle.net session with wow.profile permission. Queries Blizzard using the user's token; never returns tokens. Does not persist character associations.
+      summary: Get the authenticated user's Classic Era and Season of Discovery characters in EU
+      description: Requires a Battle.net session with wow.profile permission. Queries Blizzard in profile-classic1x-eu using the user's token; never returns tokens. Does not persist character associations.
       responses:
         '200':
           description: WoW accounts and their owned characters
@@ -23,7 +23,7 @@ paths:
         '403':
           description: Missing wow.profile permission or Blizzard profile privacy restriction
         '404':
-          description: No accessible WoW profile in EU
+          description: No accessible Classic Era / Season of Discovery profile in EU
         '502':
           description: Blizzard unavailable or returned an invalid response
   /auth/me:
@@ -92,6 +92,14 @@ components:
     WowCharacter:
       type: object
       properties:
+        avatarUrl:
+          type: [string, 'null']
+          format: uri
+          description: Optional Blizzard portrait; null when character media is unavailable.
+        insetUrl:
+          type: [string, 'null']
+          format: uri
+          description: Optional wider Blizzard portrait; null when not provided.
         id:
           type: integer
           format: int64
@@ -99,6 +107,7 @@ components:
           type: string
         level:
           type: integer
+          const: 60
         realm:
           type: object
           properties:

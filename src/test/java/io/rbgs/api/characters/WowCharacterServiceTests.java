@@ -23,17 +23,43 @@ class WowCharacterServiceTests {
         var builder = RestClient.builder();
         var server = MockRestServiceServer.bindTo(builder).build();
         var service = new WowCharacterService(builder);
-        server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=profile-eu&locale=en_GB"))
+        server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=profile-classic1x-eu&locale=en_GB"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header("Authorization", "Bearer private-token"))
                 .andRespond(withSuccess("""
                         {"wow_accounts":[{"id":7,"characters":[{"id":42,"name":"Player",
-                        "realm":{"id":1,"name":"Realm","slug":"realm"},"level":80,
+                        "realm":{"id":1,"name":"Realm","slug":"realm"},"level":60,
                         "playable_class":{"id":1,"name":"Warrior"}}]}]}
                         """, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/player/character-media?namespace=profile-classic1x-eu&locale=en_GB"))
+                .andRespond(withResourceNotFound());
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(42, profile.wowAccounts().getFirst().characters().getFirst().id());
         assertEquals("Warrior", profile.wowAccounts().getFirst().characters().getFirst().playableClass().name());
+        server.verify();
+    }
+
+    @Test
+    void onlyLevel60CharactersReceivePortraits() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).build();
+        var service = new WowCharacterService(builder);
+        server.expect(anything()).andRespond(withSuccess("""
+                {"wow_accounts":[{"id":7,"characters":[
+                {"id":42,"name":"Player","realm":{"id":1,"slug":"realm"},"level":60},
+                {"id":43,"name":"Low","realm":{"id":1,"slug":"realm"},"level":59}]}]}
+                """, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/player/character-media?namespace=profile-classic1x-eu&locale=en_GB"))
+                .andRespond(withSuccess("""
+                        {"assets":[{"key":"avatar","value":"https://render.worldofwarcraft.com/avatar.jpg"},
+                        {"key":"inset","value":"https://render.worldofwarcraft.com/inset.jpg"}]}
+                        """, MediaType.APPLICATION_JSON));
+        var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
+        assertEquals(1, profile.wowAccounts().getFirst().characters().size());
+        assertEquals("https://render.worldofwarcraft.com/avatar.jpg",
+                profile.wowAccounts().getFirst().characters().getFirst().avatarUrl());
+        assertEquals("https://render.worldofwarcraft.com/inset.jpg",
+                profile.wowAccounts().getFirst().characters().getFirst().insetUrl());
         server.verify();
     }
 
