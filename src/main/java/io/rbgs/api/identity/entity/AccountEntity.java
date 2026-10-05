@@ -6,9 +6,14 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "accounts", schema = "rbgs")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class AccountEntity {
     @Id
     private UUID id;
@@ -29,11 +34,4 @@ public class AccountEntity {
     @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     private Instant updatedAt;
 
-    protected AccountEntity() { }
-
-    public UUID getId() { return id; }
-    public String getDisplayName() { return displayName; }
-    public String getRegion() { return region; }
-    public String getStatus() { return status; }
-    public String getRole() { return role; }
 }

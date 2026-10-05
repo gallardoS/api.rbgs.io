@@ -7,14 +7,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
 import io.rbgs.api.identity.entity.AccountEntity;
+import lombok.RequiredArgsConstructor;
 
 @Service
+@RequiredArgsConstructor
 public class AccountService {
     private final AccountRepository accounts;
-
-    public AccountService(AccountRepository accounts) {
-        this.accounts = accounts;
-    }
 
     @Transactional
     public Account upsert(String issuer, String subject, String displayName) {

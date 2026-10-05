@@ -1,6 +1,7 @@
 package io.rbgs.api.identity;
 
 import io.rbgs.api.identity.dto.Profile;
+import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -10,13 +11,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/auth")
 public class AccountController {
     private final AccountService accounts;
-
-    public AccountController(AccountService accounts) {
-        this.accounts = accounts;
-    }
 
     @GetMapping("/me")
     public ResponseEntity<Profile> currentUser(Authentication authentication, CsrfToken csrfToken) {
