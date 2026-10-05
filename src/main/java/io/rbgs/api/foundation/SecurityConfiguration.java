@@ -33,6 +33,7 @@ public class SecurityConfiguration {
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/api/v1/health", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").permitAll()
+                .requestMatchers("/api/v1/characters/me").authenticated()
                 .requestMatchers("/api/v1/moderation/**").hasRole("MODERATOR")
                 .anyRequest().denyAll());
         http.csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())

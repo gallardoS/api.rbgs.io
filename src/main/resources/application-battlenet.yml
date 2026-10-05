@@ -9,7 +9,7 @@ spring:
             client-secret: ${RBGS_BNET_CLIENT_SECRET}
             authorization-grant-type: authorization_code
             redirect-uri: ${RBGS_BNET_REDIRECT_URI}
-            scope: openid
+            scope: openid,wow.profile
         provider:
           battle-net:
             issuer-uri: https://oauth.battle.net

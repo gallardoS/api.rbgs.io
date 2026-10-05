@@ -187,6 +187,7 @@ class BattleNetLoginTests {
                 .collect(java.util.stream.Collectors.toMap(part -> part[0],
                         part -> URLDecoder.decode(part[1], StandardCharsets.UTF_8)));
         nonce.set(query.get("nonce"));
+        org.junit.jupiter.api.Assertions.assertTrue(Arrays.asList(query.get("scope").split(" ")).contains("wow.profile"));
         return new Login((MockHttpSession) result.getRequest().getSession(false), query.get("state"));
     }
 
@@ -236,7 +237,7 @@ class BattleNetLoginTests {
                     .clientId("test-client").clientSecret("test-secret")
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                     .redirectUri("{baseUrl}/login/oauth2/code/{registrationId}")
-                    .scope("openid").authorizationUri(issuer + "/authorize")
+                    .scope("openid", "wow.profile").authorizationUri(issuer + "/authorize")
                     .tokenUri(issuer + "/token").jwkSetUri(issuer + "/jwks")
                     .userInfoUri(issuer + "/userinfo").userNameAttributeName("sub")
                     .issuerUri(issuer).clientName("Battle.net stub").build();

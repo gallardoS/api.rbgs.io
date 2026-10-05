@@ -6,6 +6,26 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /characters/me:
+    get:
+      operationId: getCurrentUserCharacters
+      summary: Get the authenticated user's WoW accounts and characters in EU
+      description: Requires a Battle.net session with wow.profile permission. Queries Blizzard using the user's token; never returns tokens. Does not persist character associations.
+      responses:
+        '200':
+          description: WoW accounts and their owned characters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WowAccountProfile'
+        '401':
+          description: Missing session or expired Battle.net token; sign in again
+        '403':
+          description: Missing wow.profile permission or Blizzard profile privacy restriction
+        '404':
+          description: No accessible WoW profile in EU
+        '502':
+          description: Blizzard unavailable or returned an invalid response
   /auth/me:
     get:
       operationId: getCurrentUser
@@ -52,6 +72,59 @@ paths:
                     const: ok
 components:
   schemas:
+    WowAccountProfile:
+      type: object
+      required: [wow_accounts]
+      properties:
+        wow_accounts:
+          type: array
+          items:
+            type: object
+            required: [id, characters]
+            properties:
+              id:
+                type: integer
+                format: int64
+              characters:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WowCharacter'
+    WowCharacter:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        level:
+          type: integer
+        realm:
+          type: object
+          properties:
+            id:
+              type: integer
+              format: int64
+            name:
+              type: string
+            slug:
+              type: string
+        playable_class:
+          $ref: '#/components/schemas/WowNamedReference'
+        playable_race:
+          $ref: '#/components/schemas/WowNamedReference'
+        faction:
+          $ref: '#/components/schemas/WowNamedReference'
+    WowNamedReference:
+      type: object
+      properties:
+        id:
+          type: [integer, 'null']
+          format: int64
+        name:
+          type: [string, 'null']
+        type:
+          type: [string, 'null']
     Profile:
       type: object
       required: [id, displayName, region, role]
