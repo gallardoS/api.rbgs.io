@@ -16,6 +16,24 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  security:
+    oauth2:
+      client:
+        registration:
+          battle-net:
+            provider: battle-net
+            client-id: ${RBGS_BNET_CLIENT_ID}
+            client-secret: ${RBGS_BNET_CLIENT_SECRET}
+            authorization-grant-type: authorization_code
+            redirect-uri: ${RBGS_BNET_REDIRECT_URI}
+            scope: openid,wow.profile
+        provider:
+          battle-net:
+            issuer-uri: https://oauth.battle.net
+
+rbgs:
+  auth:
+    web-origin: ${RBGS_WEB_ORIGIN}
 
 server:
   port: ${RBGS_API_PORT:${PORT:8080}}
