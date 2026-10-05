@@ -77,7 +77,7 @@ class BattleNetLoginTests {
     }
 
     @Autowired MockMvc mvc;
-    @MockitoBean AccountRepository accounts;
+    @MockitoBean AccountService accounts;
 
     @AfterAll
     static void stopProvider() { provider.stop(0); }
@@ -87,8 +87,9 @@ class BattleNetLoginTests {
         UUID id = UUID.randomUUID();
         when(accounts.upsert(eq(issuer), eq("stable-subject"), anyString()))
                 .thenReturn(new Account(id, "Player#1234", "EU", "ACTIVE", "USER"));
-        when(accounts.findByIdentity(issuer, "stable-subject"))
-                .thenReturn(new Account(id, "Player#1234", "EU", "ACTIVE", "USER"));
+        when(accounts.currentUser(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(call -> call.getArgument(0) == null ? null :
+                        new io.rbgs.api.identity.dto.Profile(id, "Player#1234", "EU", "USER"));
         Login login = startLogin();
         mvc.perform(get("/login/oauth2/code/battle-net")
                 .param("code", "valid").param("state", login.state()).session(login.session()))

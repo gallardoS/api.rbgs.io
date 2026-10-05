@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.List;
 
 import io.rbgs.api.identity.Account;
-import io.rbgs.api.identity.AccountRepository;
+import io.rbgs.api.identity.AccountService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,7 +28,7 @@ public class SecurityConfiguration {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
             ObjectProvider<ClientRegistrationRepository> registrations,
-            ObjectProvider<AccountRepository> accountRepositories,
+            ObjectProvider<AccountService> accountServices,
             @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/api/v1/health", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
@@ -47,7 +47,7 @@ public class SecurityConfiguration {
         if (registrations.getIfAvailable() != null) {
             String successUrl = webOrigin.isBlank() ? "/" : webOrigin + "/";
             String failureUrl = webOrigin.isBlank() ? "/?auth=failed" : webOrigin + "/?auth=failed";
-            AccountRepository accounts = accountRepositories.getObject();
+            AccountService accounts = accountServices.getObject();
             OidcUserService delegate = new OidcUserService();
             http.oauth2Login(login -> login
                     .userInfoEndpoint(userInfo -> userInfo.oidcUserService(request -> {

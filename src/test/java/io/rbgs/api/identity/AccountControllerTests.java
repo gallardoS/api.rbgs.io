@@ -23,7 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import({SecurityConfiguration.class, AccountControllerTests.ModeratorProbe.class})
 class AccountControllerTests {
     @Autowired MockMvc mvc;
-    @MockitoBean AccountRepository accounts;
+    @MockitoBean AccountService accounts;
 
     @Test
     void anonymousUserHasNoProfile() throws Exception {
@@ -33,8 +33,8 @@ class AccountControllerTests {
     @Test
     void profileOnlyContainsPublicAccountFields() throws Exception {
         UUID id = UUID.randomUUID();
-        when(accounts.findByIdentity("https://idp.example", "stable-subject"))
-                .thenReturn(new Account(id, "Player#1234", "EU", "ACTIVE", "USER"));
+        when(accounts.currentUser(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new io.rbgs.api.identity.dto.Profile(id, "Player#1234", "EU", "USER"));
         mvc.perform(get("/api/v1/auth/me").with(oidcLogin().idToken(token -> token
                 .issuer("https://idp.example").subject("stable-subject"))))
                 .andExpect(status().isOk())

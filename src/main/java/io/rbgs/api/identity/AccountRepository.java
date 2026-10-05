@@ -1,38 +1,23 @@
 package io.rbgs.api.identity;
 
+import java.util.Optional;
 import java.util.UUID;
+import io.rbgs.api.identity.entity.AccountEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
+public interface AccountRepository extends JpaRepository<AccountEntity, UUID> {
+    Optional<AccountEntity> findByProviderIssuerAndProviderSubject(String issuer, String subject);
 
-@Repository
-public class AccountRepository {
-    private final JdbcTemplate jdbc;
-
-    public AccountRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
-
-    public Account upsert(String issuer, String subject, String displayName) {
-        return jdbc.queryForObject("""
-                INSERT INTO rbgs.accounts (id, provider_issuer, provider_subject, display_name, region)
-                VALUES (?, ?, ?, ?, 'EU')
-                ON CONFLICT (provider_issuer, provider_subject) DO UPDATE
-                    SET display_name = EXCLUDED.display_name, updated_at = CURRENT_TIMESTAMP
-                RETURNING id, display_name, region, account_status, account_role
-                """, (row, index) -> new Account(
-                        row.getObject("id", UUID.class), row.getString("display_name"),
-                        row.getString("region"), row.getString("account_status"), row.getString("account_role")),
-                UUID.randomUUID(), issuer, subject, displayName);
-    }
-
-    public Account findByIdentity(String issuer, String subject) {
-        return jdbc.queryForObject("""
-                SELECT id, display_name, region, account_status, account_role
-                FROM rbgs.accounts WHERE provider_issuer = ? AND provider_subject = ?
-                """, (row, index) -> new Account(
-                        row.getObject("id", UUID.class), row.getString("display_name"),
-                        row.getString("region"), row.getString("account_status"), row.getString("account_role")),
-                issuer, subject);
-    }
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+            INSERT INTO rbgs.accounts (id, provider_issuer, provider_subject, display_name, region)
+            VALUES (:id, :issuer, :subject, :displayName, 'EU')
+            ON CONFLICT (provider_issuer, provider_subject) DO UPDATE
+                SET display_name = EXCLUDED.display_name, updated_at = CURRENT_TIMESTAMP
+            """, nativeQuery = true)
+    int upsert(@Param("id") UUID id, @Param("issuer") String issuer,
+            @Param("subject") String subject, @Param("displayName") String displayName);
 }

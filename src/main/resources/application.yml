@@ -5,6 +5,10 @@ spring:
     url: ${RBGS_DB_URL:jdbc:postgresql://localhost:55432/rbgs}
     username: ${RBGS_DB_USER:rbgs}
     password: ${RBGS_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
   flyway:
     enabled: true
     schemas: rbgs

@@ -1,7 +1,7 @@
 package io.rbgs.api;
 
 import io.rbgs.api.identity.Account;
-import io.rbgs.api.identity.AccountRepository;
+import io.rbgs.api.identity.AccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -15,7 +15,7 @@ class ApiApplicationTests {
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
 	@Autowired
-	private AccountRepository accounts;
+	private AccountService accounts;
 
 	@Test
 	void foundationMigrationIsApplied() {
@@ -33,6 +33,47 @@ class ApiApplicationTests {
 		assertEquals(first.id(), renamed.id());
 		assertEquals("Changed#5678", renamed.displayName());
 		assertEquals("USER", renamed.role());
+	}
+
+	@Test
+	void loginDoesNotResetModerationState() {
+		String subject = java.util.UUID.randomUUID().toString();
+		Account original = accounts.upsert("https://oauth.battle.net", subject, "Original#1234");
+		jdbcTemplate.update("UPDATE rbgs.accounts SET account_status = 'SUSPENDED', account_role = 'MODERATOR' WHERE id = ?",
+				original.id());
+		Account renamed = accounts.upsert("https://oauth.battle.net", subject, "Changed#5678");
+		assertEquals(original.id(), renamed.id());
+		assertEquals("Changed#5678", renamed.displayName());
+		assertEquals("SUSPENDED", renamed.status());
+		assertEquals("MODERATOR", renamed.role());
+	}
+
+	@Test
+	void concurrentLoginsKeepOneAccount() throws Exception {
+		String subject = java.util.UUID.randomUUID().toString();
+		var ready = new java.util.concurrent.CountDownLatch(2);
+		var start = new java.util.concurrent.CountDownLatch(1);
+		try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+			java.util.concurrent.Callable<Account> login = () -> {
+				ready.countDown();
+				if (!start.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+					throw new IllegalStateException("Concurrent login did not start");
+				}
+				return accounts.upsert("https://oauth.battle.net", subject, "Concurrent#1234");
+			};
+			var first = executor.submit(login);
+			var second = executor.submit(login);
+			try {
+				org.junit.jupiter.api.Assertions.assertTrue(ready.await(10, java.util.concurrent.TimeUnit.SECONDS));
+			} finally {
+				start.countDown();
+			}
+			assertEquals(first.get(15, java.util.concurrent.TimeUnit.SECONDS).id(),
+					second.get(15, java.util.concurrent.TimeUnit.SECONDS).id());
+			assertEquals(1L, jdbcTemplate.queryForObject(
+					"SELECT COUNT(*) FROM rbgs.accounts WHERE provider_issuer = ? AND provider_subject = ?",
+					Long.class, "https://oauth.battle.net", subject));
+		}
 	}
 
 }
