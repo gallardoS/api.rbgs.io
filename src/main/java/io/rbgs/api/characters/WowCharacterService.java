@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import io.rbgs.api.characters.dto.CharacterMedia;
+import io.rbgs.api.characters.dto.CharacterProfile;
 import io.rbgs.api.characters.dto.WowAccountProfile;
 import org.springframework.stereotype.Service;
 import org.springframework.http.HttpStatus;
@@ -59,7 +60,7 @@ public class WowCharacterService {
                     }
                     var characters = accounts.computeIfAbsent(account.id(), id -> new ArrayList<>());
                     account.characters().stream().filter(character -> character.level() >= 60)
-                            .map(character -> withAvatar(character, token.getTokenValue(), namespace))
+                            .map(character -> withDetails(character, token.getTokenValue(), namespace))
                             .forEach(characters::add);
                 }
             }
@@ -81,7 +82,7 @@ public class WowCharacterService {
         }
     }
 
-    private WowAccountProfile.WowCharacter withAvatar(WowAccountProfile.WowCharacter character, String token, String namespace) {
+    private WowAccountProfile.WowCharacter withDetails(WowAccountProfile.WowCharacter character, String token, String namespace) {
         String avatar = null;
         String inset = null;
         try {
@@ -99,8 +100,23 @@ public class WowCharacterService {
         } catch (RestClientException | IllegalArgumentException error) {
             // Character media is optional; missing portraits must not hide owned characters.
         }
+        var guild = character.guild();
+        var gender = character.gender();
+        try {
+            CharacterProfile profile = client.get().uri(builder -> builder
+                    .path("/profile/wow/character/{realm}/{name}")
+                    .queryParam("namespace", namespace).queryParam("locale", "en_GB")
+                    .build(character.realm().slug(), character.name().toLowerCase(Locale.ROOT)))
+                    .headers(headers -> headers.setBearerAuth(token)).retrieve().body(CharacterProfile.class);
+            if (profile != null) {
+                guild = profile.guild();
+                if (profile.gender() != null) gender = profile.gender();
+            }
+        } catch (RestClientException | IllegalArgumentException error) {
+            // Guild and gender are optional; unavailable profiles must not hide owned characters.
+        }
         return new WowAccountProfile.WowCharacter(character.id(), character.name(), character.realm(),
-                character.playableClass(), character.playableRace(), character.faction(), character.level(), avatar, inset, namespace);
+                character.playableClass(), character.playableRace(), character.faction(), character.level(), avatar, inset, namespace, guild, gender);
     }
 
     private boolean isBlizzardImage(String value) {

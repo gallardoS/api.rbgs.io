@@ -93,6 +93,16 @@ components:
       type: object
       required: [namespace]
       properties:
+        gender:
+          anyOf:
+            - $ref: '#/components/schemas/WowNamedReference'
+            - type: 'null'
+          description: Character gender from Blizzard (type MALE or FEMALE); null when unavailable.
+        guild:
+          anyOf:
+            - $ref: '#/components/schemas/WowNamedReference'
+            - type: 'null'
+          description: Optional guild from the character profile; null when unguilded or unavailable.
         namespace:
           type: string
           enum: [profile-classic1x-eu, profile-classic-eu]

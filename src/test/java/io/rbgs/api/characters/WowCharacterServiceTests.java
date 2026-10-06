@@ -33,11 +33,14 @@ class WowCharacterServiceTests {
                         """, MediaType.APPLICATION_JSON));
         server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/player/character-media?namespace=profile-classic1x-eu&locale=en_GB"))
                 .andRespond(withResourceNotFound());
+        expectCharacterProfile(server, "player", "profile-classic1x-eu", "{\"guild\":{\"id\":12,\"name\":\"MANDOKIR\"},\"gender\":{\"type\":\"MALE\",\"name\":\"Male\"}}");
         expectMissingProfile(server, "profile-classic-eu");
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(42, profile.wowAccounts().getFirst().characters().getFirst().id());
         assertEquals("Warrior", profile.wowAccounts().getFirst().characters().getFirst().playableClass().name());
         assertEquals("profile-classic1x-eu", profile.wowAccounts().getFirst().characters().getFirst().namespace());
+        assertEquals("MANDOKIR", profile.wowAccounts().getFirst().characters().getFirst().guild().name());
+        assertEquals("MALE", profile.wowAccounts().getFirst().characters().getFirst().gender().type());
         server.verify();
     }
 
@@ -56,6 +59,8 @@ class WowCharacterServiceTests {
                         {"assets":[{"key":"avatar","value":"https://render.worldofwarcraft.com/avatar.jpg"},
                         {"key":"inset","value":"https://render.worldofwarcraft.com/inset.jpg"}]}
                         """, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/player?namespace=profile-classic1x-eu&locale=en_GB"))
+                .andRespond(withResourceNotFound());
         expectMissingProfile(server, "profile-classic-eu");
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(1, profile.wowAccounts().getFirst().characters().size());
@@ -63,6 +68,8 @@ class WowCharacterServiceTests {
                 profile.wowAccounts().getFirst().characters().getFirst().avatarUrl());
         assertEquals("https://render.worldofwarcraft.com/inset.jpg",
                 profile.wowAccounts().getFirst().characters().getFirst().insetUrl());
+        assertNull(profile.wowAccounts().getFirst().characters().getFirst().guild());
+        assertNull(profile.wowAccounts().getFirst().characters().getFirst().gender());
         server.verify();
     }
 
@@ -79,6 +86,7 @@ class WowCharacterServiceTests {
                         """, MediaType.APPLICATION_JSON));
         server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/player/character-media?namespace=profile-classic1x-eu&locale=en_GB"))
                 .andRespond(withResourceNotFound());
+        expectCharacterProfile(server, "player", "profile-classic1x-eu", "{}");
         server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=profile-classic-eu&locale=en_GB"))
                 .andExpect(header("Authorization", "Bearer private-token"))
                 .andRespond(withSuccess("""
@@ -93,8 +101,10 @@ class WowCharacterServiceTests {
                 .andRespond(withSuccess("""
                         {"assets":[{"key":"avatar","value":"https://render.worldofwarcraft.com/classic-eu/avatar.jpg"}]}
                         """, MediaType.APPLICATION_JSON));
+        expectCharacterProfile(server, "player", "profile-classic-eu", "{\"guild\":{\"id\":13,\"name\":\"NOGGENFOGGER DODGERS\"},\"gender\":{\"type\":\"FEMALE\",\"name\":\"Female\"}}");
         server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/other/character-media?namespace=profile-classic-eu&locale=en_GB"))
                 .andRespond(withResourceNotFound());
+        expectCharacterProfile(server, "other", "profile-classic-eu", "{}");
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(2, profile.wowAccounts().size());
         var characters = profile.wowAccounts().getFirst().characters();
@@ -103,6 +113,9 @@ class WowCharacterServiceTests {
         assertEquals(81, characters.get(1).level());
         assertEquals("profile-classic-eu", characters.get(1).namespace());
         assertEquals("https://render.worldofwarcraft.com/classic-eu/avatar.jpg", characters.get(1).avatarUrl());
+        assertNull(characters.getFirst().guild());
+        assertEquals("NOGGENFOGGER DODGERS", characters.get(1).guild().name());
+        assertEquals("FEMALE", characters.get(1).gender().type());
         assertEquals(90, profile.wowAccounts().get(1).characters().getFirst().level());
         server.verify();
     }
@@ -148,6 +161,12 @@ class WowCharacterServiceTests {
     private void expectMissingProfile(MockRestServiceServer server, String namespace) {
         server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=en_GB"))
                 .andRespond(withResourceNotFound());
+    }
+
+    private void expectCharacterProfile(MockRestServiceServer server, String name, String namespace, String body) {
+        server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/" + name + "?namespace=" + namespace + "&locale=en_GB"))
+                .andExpect(header("Authorization", "Bearer private-token"))
+                .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
     }
 
     @Test

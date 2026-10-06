@@ -8,7 +8,8 @@ public record WowAccountProfile(@JsonProperty("wow_accounts") List<WowAccount> w
     public record WowCharacter(long id, String name, Realm realm,
             @JsonProperty("playable_class") NamedReference playableClass,
             @JsonProperty("playable_race") NamedReference playableRace,
-            NamedReference faction, int level, String avatarUrl, String insetUrl, String namespace) { }
+            NamedReference faction, int level, String avatarUrl, String insetUrl, String namespace,
+            NamedReference guild, NamedReference gender) { }
     public record Realm(long id, String name, String slug) { }
     public record NamedReference(Long id, String name, String type) { }
 }
