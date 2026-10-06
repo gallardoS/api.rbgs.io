@@ -9,8 +9,8 @@ paths:
   /characters/me:
     get:
       operationId: getCurrentUserCharacters
-      summary: Get the authenticated user's Classic Era and Season of Discovery characters in EU
-      description: Requires a Battle.net session with wow.profile permission. Queries Blizzard in profile-classic1x-eu using the user's token; never returns tokens. Does not persist character associations.
+      summary: Get the authenticated user's WoW Classic characters of level 60 or above in EU
+      description: Requires a Battle.net session with wow.profile permission. Queries profile-classic1x-eu and profile-classic-eu using the user's token, merges WoW accounts, and returns characters of level 60 or above with their source namespace. A missing profile (404) in one branch does not hide the other branch. Never returns tokens or persists character associations.
       responses:
         '200':
           description: WoW accounts and their owned characters
@@ -23,7 +23,7 @@ paths:
         '403':
           description: Missing wow.profile permission or Blizzard profile privacy restriction
         '404':
-          description: No accessible Classic Era / Season of Discovery profile in EU
+          description: Neither WoW Classic branch has an accessible profile in EU
         '502':
           description: Blizzard unavailable or returned an invalid response
   /auth/me:
@@ -91,7 +91,12 @@ components:
                   $ref: '#/components/schemas/WowCharacter'
     WowCharacter:
       type: object
+      required: [namespace]
       properties:
+        namespace:
+          type: string
+          enum: [profile-classic1x-eu, profile-classic-eu]
+          description: Source Classic branch; part of the character's identity alongside account, realm and character IDs.
         avatarUrl:
           type: [string, 'null']
           format: uri
@@ -107,7 +112,7 @@ components:
           type: string
         level:
           type: integer
-          const: 60
+          minimum: 60
         realm:
           type: object
           properties:
