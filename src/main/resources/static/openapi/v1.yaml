@@ -17,8 +17,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [seasonLive, subscriptionsAvailable]
+                required: [emailEnabled, seasonLive, subscriptionsAvailable]
                 properties:
+                  emailEnabled: { type: boolean }
                   seasonLive: { type: boolean }
                   subscriptionsAvailable: { type: boolean }
     post:

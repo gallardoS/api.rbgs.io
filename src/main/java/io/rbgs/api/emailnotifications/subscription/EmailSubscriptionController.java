@@ -33,7 +33,7 @@ public class EmailSubscriptionController {
     @GetMapping("/api/v1/season-notifications")
     public Map<String, Boolean> status(CsrfToken csrf) {
         csrf.getToken();
-        return Map.of("seasonLive", settings.seasonLive(), "subscriptionsAvailable", settings.enabled() && !settings.seasonLive());
+        return Map.of("emailEnabled", settings.enabled(), "seasonLive", settings.seasonLive(), "subscriptionsAvailable", settings.enabled() && !settings.seasonLive());
     }
 
     @PostMapping("/api/v1/season-notifications")

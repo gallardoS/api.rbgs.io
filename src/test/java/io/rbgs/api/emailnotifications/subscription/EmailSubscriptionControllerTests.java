@@ -36,12 +36,22 @@ class EmailSubscriptionControllerTests {
         }
     }
 
+    @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.BEFORE_METHOD)
     @Test void statusEstablishesCsrfCookieWithoutLeakingConfiguration() throws Exception {
         when(settings.enabled()).thenReturn(true);
         mvc.perform(get("/api/v1/season-notifications")).andExpect(status().isOk())
                 .andExpect(cookie().exists("XSRF-TOKEN"))
                 .andExpect(jsonPath("$.subscriptionsAvailable").value(true))
+                .andExpect(jsonPath("$.emailEnabled").value(true))
                 .andExpect(jsonPath("$.apiKey").doesNotExist());
+    }
+
+    @Test void disabledEmailHidesTheWidgetEvenDuringPreseason() throws Exception {
+        when(settings.enabled()).thenReturn(false);
+        mvc.perform(get("/api/v1/season-notifications"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailEnabled").value(false))
+                .andExpect(jsonPath("$.subscriptionsAvailable").value(false));
     }
 
     @Test void publicLinkActionsRequireCsrfAndLaunchRequiresModerator() throws Exception {
