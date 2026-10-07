@@ -1,0 +1,17 @@
+ALTER TABLE rbgs.season_subscriptions RENAME TO email_subscriptions;
+ALTER TABLE rbgs.season_notification_campaign RENAME TO email_campaigns;
+ALTER TABLE rbgs.season_notification_outbox RENAME TO email_outbox;
+
+ALTER TABLE rbgs.email_subscriptions RENAME CONSTRAINT season_subscriptions_pkey TO email_subscriptions_pkey;
+ALTER TABLE rbgs.email_subscriptions RENAME CONSTRAINT season_subscriptions_email_key TO email_subscriptions_email_key;
+ALTER TABLE rbgs.email_subscriptions RENAME CONSTRAINT season_subscriptions_language_check TO email_subscriptions_language_check;
+ALTER TABLE rbgs.email_subscriptions RENAME CONSTRAINT season_subscriptions_confirmation_hash_key TO email_subscriptions_confirmation_hash_key;
+ALTER TABLE rbgs.email_subscriptions RENAME CONSTRAINT season_subscriptions_unsubscribe_hash_key TO email_subscriptions_unsubscribe_hash_key;
+ALTER TABLE rbgs.email_campaigns RENAME CONSTRAINT season_notification_campaign_pkey TO email_campaigns_pkey;
+ALTER TABLE rbgs.email_campaigns RENAME CONSTRAINT season_notification_campaign_id_check TO email_campaigns_id_check;
+ALTER TABLE rbgs.email_outbox RENAME CONSTRAINT season_notification_outbox_pkey TO email_outbox_pkey;
+ALTER TABLE rbgs.email_outbox RENAME CONSTRAINT season_notification_outbox_subscription_id_fkey TO email_outbox_subscription_id_fkey;
+ALTER TABLE rbgs.email_outbox RENAME CONSTRAINT season_notification_outbox_kind_check TO email_outbox_kind_check;
+ALTER TABLE rbgs.email_outbox RENAME CONSTRAINT season_notification_outbox_status_check TO email_outbox_status_check;
+ALTER INDEX rbgs.season_one_launch_per_subscriber RENAME TO email_one_launch_per_subscriber;
+ALTER INDEX rbgs.season_outbox_due RENAME TO email_outbox_due;

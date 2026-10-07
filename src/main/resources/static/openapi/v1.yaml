@@ -2,10 +2,114 @@ openapi: 3.1.0
 info:
   title: rbgs.io API
   version: 1.0.0
-  description: Foundation and Battle.net session contract. Other product endpoints are added with their owning features.
+  description: Foundation, Battle.net sessions, character profiles and season launch notifications. Other product endpoints are added with their owning features.
 servers:
   - url: /api/v1
 paths:
+  /season-notifications:
+    get:
+      operationId: getSeasonNotificationStatus
+      summary: Get launch state and establish an anonymous CSRF cookie
+      responses:
+        '200':
+          description: Notification state, without provider credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [seasonLive, subscriptionsAvailable]
+                properties:
+                  seasonLive: { type: boolean }
+                  subscriptionsAvailable: { type: boolean }
+    post:
+      operationId: subscribeToSeasonLaunch
+      summary: Request one launch notification, without a Battle.net account
+      description: Requires X-XSRF-TOKEN from the XSRF-TOKEN cookie. The website field is a honeypot and must be empty. Repeated and already-confirmed addresses receive the same generic response. Confirmation links expire after 48 hours; re-requests are limited to one per address per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, language, consent]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                language: { type: string, enum: [en, es] }
+                consent: { type: boolean, const: true }
+                website: { type: string, maxLength: 200, default: '' }
+      responses:
+        '202': { description: Request accepted; confirmation may be queued if required }
+        '400': { description: Invalid email, locale or consent }
+        '403': { description: Missing or invalid CSRF token }
+        '409': { description: Season already started }
+        '429': { description: Too many requests }
+        '503': { description: Email delivery has not been configured }
+  /season-notifications/confirm:
+    post:
+      operationId: confirmSeasonNotification
+      summary: Confirm an email using a bearer token and a deliberate user action
+      description: Requires X-XSRF-TOKEN. Does not require Battle.net. An already-confirmed active token succeeds idempotently.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeasonNotificationLink' }
+      responses:
+        '204': { description: Email confirmed }
+        '400': { description: Invalid, expired or cancelled confirmation }
+        '403': { description: Missing or invalid CSRF token }
+        '429': { description: Too many requests }
+  /season-notifications/unsubscribe:
+    post:
+      operationId: cancelSeasonNotification
+      summary: Cancel a notification using a bearer token and a deliberate user action
+      description: Requires X-XSRF-TOKEN. Repeated cancellation succeeds idempotently. An email already in flight may complete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeasonNotificationLink' }
+      responses:
+        '204': { description: Notification cancelled }
+        '400': { description: Invalid token }
+        '403': { description: Missing or invalid CSRF token }
+        '429': { description: Too many requests }
+  /moderation/season-notifications:
+    get:
+      operationId: getSeasonNotificationConfiguration
+      summary: Moderator-only launch and configuration flags
+      responses:
+        '200':
+          description: Non-secret configuration state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [configured, seasonLive]
+                properties:
+                  configured: { type: boolean }
+                  seasonLive: { type: boolean }
+        '401': { description: Missing authenticated session }
+        '403': { description: Moderator role required }
+  /moderation/season-notifications/launch:
+    post:
+      operationId: queueSeasonLaunchNotifications
+      summary: Moderator-only manual launch campaign
+      description: Requires X-XSRF-TOKEN, a moderator session and the server season-live flag. Operators must verify ranked play is available first. Repeating the request queues no duplicates. Counts queued messages, not delivered inboxes.
+      responses:
+        '200':
+          description: Campaign queued durably
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [queued]
+                properties:
+                  queued: { type: integer, minimum: 0 }
+        '401': { description: Missing authenticated session }
+        '403': { description: Moderator role or valid CSRF token required }
+        '409': { description: Season-live flag is disabled }
+        '503': { description: Email delivery has not been configured }
   /characters/me:
     get:
       operationId: getCurrentUserCharacters
@@ -72,6 +176,11 @@ paths:
                     const: ok
 components:
   schemas:
+    SeasonNotificationLink:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
     WowAccountProfile:
       type: object
       required: [wow_accounts]

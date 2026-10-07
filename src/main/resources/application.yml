@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:./.env[.properties]
   application:
     name: rbgs-api
   datasource:
@@ -32,6 +34,14 @@ spring:
             issuer-uri: https://oauth.battle.net
 
 rbgs:
+  notifications:
+    sending-enabled: ${RBGS_EMAIL_ENABLED:false}
+    region: ${RBGS_SES_REGION:}
+    from: ${RBGS_EMAIL_FROM:}
+    token-secret: ${RBGS_NOTIFICATION_TOKEN_SECRET:}
+    season-live: ${RBGS_SEASON_LIVE:false}
+    daily-limit: ${RBGS_EMAIL_DAILY_LIMIT:90}
+    web-origin: ${RBGS_WEB_ORIGIN}
   auth:
     web-origin: ${RBGS_WEB_ORIGIN}
 
