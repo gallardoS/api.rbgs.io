@@ -32,15 +32,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, language, consent]
+              required: [email, language]
               properties:
                 email: { type: string, format: email, maxLength: 254 }
                 language: { type: string, enum: [en, es] }
-                consent: { type: boolean, const: true }
                 website: { type: string, maxLength: 200, default: '' }
       responses:
         '202': { description: Request accepted; confirmation may be queued if required }
-        '400': { description: Invalid email, locale or consent }
+        '400': { description: Invalid email or locale }
         '403': { description: Missing or invalid CSRF token }
         '409': { description: Season already started }
         '429': { description: Too many requests }

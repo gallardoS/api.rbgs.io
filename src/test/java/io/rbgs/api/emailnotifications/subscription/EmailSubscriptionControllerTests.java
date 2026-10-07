@@ -21,15 +21,15 @@ class EmailSubscriptionControllerTests {
     @Autowired MockMvc mvc;
     @MockitoBean EmailSubscriptionService service;
     @MockitoBean EmailNotificationSettings settings;
-    private static final String JSON = "{\"email\":\"player@example.com\",\"language\":\"es\",\"consent\":true,\"website\":\"\"}";
+    private static final String JSON = "{\"email\":\"player@example.com\",\"language\":\"es\",\"website\":\"\"}";
 
-    @Test void anonymousSubscriptionRequiresCsrfAndValidExplicitConsent() throws Exception {
+    @Test void explicitNotificationRequestRequiresCsrfAndValidEmailAndLanguage() throws Exception {
         mvc.perform(post("/api/v1/season-notifications").contentType("application/json").content(JSON))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json").content(JSON))
                 .andExpect(status().isAccepted());
         verify(service).subscribe("player@example.com", "es", "");
-        for (String invalid : new String[] {JSON.replace("true", "false"), JSON.replace("true", "null"),
+        for (String invalid : new String[] {
                 JSON.replace("player@example.com", "not-an-email"), JSON.replace("\"es\"", "\"fr\"")}) {
             mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json").content(invalid))
                     .andExpect(status().isBadRequest());

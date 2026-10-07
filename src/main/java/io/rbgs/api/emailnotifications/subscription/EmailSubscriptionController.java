@@ -5,10 +5,8 @@ import io.rbgs.api.emailnotifications.config.EmailNotificationSettings;
 import java.util.Map;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.ResponseEntity;
@@ -65,6 +63,6 @@ public class EmailSubscriptionController {
 
     public record Subscription(@NotBlank @Email @Size(max = 254) String email,
             @NotBlank @Pattern(regexp = "en|es") String language,
-            @NotNull @AssertTrue Boolean consent, @Size(max = 200) String website) {}
+            @Size(max = 200) String website) {}
     public record Link(@NotBlank @Pattern(regexp = "[A-Za-z0-9_-]{43}") String token) {}
 }
