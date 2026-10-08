@@ -3,6 +3,11 @@ spring:
     import: optional:file:./.env[.properties]
   application:
     name: rbgs-api
+  cache:
+    type: caffeine
+    cache-names: wowCharacters
+    caffeine:
+      spec: maximumSize=256,expireAfterWrite=60s
   datasource:
     url: ${RBGS_DB_URL:jdbc:postgresql://localhost:55432/rbgs}
     username: ${RBGS_DB_USER:rbgs}

@@ -2,12 +2,19 @@ package io.rbgs.api;
 
 import io.rbgs.api.identity.Account;
 import io.rbgs.api.identity.AccountService;
+import io.rbgs.api.characters.WowCharacterLoader;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.aop.support.AopUtils;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.caffeine.CaffeineCache;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 class ApiApplicationTests {
@@ -16,6 +23,18 @@ class ApiApplicationTests {
 	private JdbcTemplate jdbcTemplate;
 	@Autowired
 	private AccountService accounts;
+	@Autowired
+	private CacheManager cacheManager;
+	@Autowired
+	private WowCharacterLoader characterLoader;
+
+	@Test
+	void characterCachingUsesCaffeineWithProductionLimitsAndSpringProxy() {
+		var cache = assertInstanceOf(CaffeineCache.class, cacheManager.getCache("wowCharacters")).getNativeCache();
+		assertEquals(256L, cache.policy().eviction().orElseThrow().getMaximum());
+		assertEquals(Duration.ofSeconds(60), cache.policy().expireAfterWrite().orElseThrow().getExpiresAfter());
+		assertTrue(AopUtils.isAopProxy(characterLoader));
+	}
 
 	@Test
 	void foundationMigrationIsApplied() {
