@@ -16,7 +16,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(EmailSubscriptionController.class)
-@Import({SecurityConfiguration.class, EmailRateLimiter.class})
+@Import({SecurityConfiguration.class, EmailRateLimiter.class, io.rbgs.api.emailnotifications.config.EmailRuntimeConfiguration.class})
 class EmailSubscriptionControllerTests {
     @Autowired MockMvc mvc;
     @MockitoBean EmailSubscriptionService service;

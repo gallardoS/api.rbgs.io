@@ -35,7 +35,7 @@ class SesEmailWorkerTests {
         when(outbox.claim()).thenReturn(delivery);
         when(outbox.canSend(delivery)).thenReturn(true);
         when(client.sendEmail(any(SendEmailRequest.class))).thenReturn(SendEmailResponse.builder().messageId("ses-id").build());
-        var worker = new SesEmailWorker(settings, outbox, client);
+        var worker = new SesEmailWorker(settings, outbox, new SesEmailSender(settings, client), mock(EmailRetentionService.class));
         worker.dispatch();
         var request = ArgumentCaptor.forClass(SendEmailRequest.class);
         verify(client).sendEmail(request.capture());
@@ -55,7 +55,7 @@ class SesEmailWorkerTests {
         when(client.sendEmail(any(SendEmailRequest.class)))
                 .thenThrow(TooManyRequestsException.builder().message("throttled").build())
                 .thenThrow(new RuntimeException("response lost"));
-        var worker = new SesEmailWorker(settings(), outbox, client);
+        var worker = new SesEmailWorker(settings(), outbox, new SesEmailSender(settings(), client), mock(EmailRetentionService.class));
         worker.dispatch();
         verify(outbox).failed(delivery, false);
         worker.dispatch();
@@ -67,7 +67,7 @@ class SesEmailWorkerTests {
         var outbox = mock(EmailOutbox.class);
         var client = mock(SesV2Client.class);
         when(outbox.claim()).thenReturn(delivery());
-        new SesEmailWorker(settings(), outbox, client).dispatch();
+        new SesEmailWorker(settings(), outbox, new SesEmailSender(settings(), client), mock(EmailRetentionService.class)).dispatch();
         verifyNoInteractions(client);
     }
 
@@ -77,8 +77,29 @@ class SesEmailWorkerTests {
         var enabled = new EmailNotificationSettings("eu-west-1", "notice@example.com", "a".repeat(32), "https://rbgs.io", false, 90, true);
         assertTrue(enabled.enabled());
         var outbox = mock(EmailOutbox.class);
-        new SesEmailWorker(disabled, outbox, mock(SesV2Client.class)).dispatch();
+        new SesEmailWorker(disabled, outbox, mock(EmailSender.class), mock(EmailRetentionService.class)).dispatch();
         verifyNoInteractions(outbox);
+    }
+
+    @Test void persistenceFailureAfterAcceptanceDoesNotBecomeSendFailureOrRetry() {
+        var outbox = mock(EmailOutbox.class);
+        var sender = mock(EmailSender.class);
+        var delivery = delivery();
+        when(outbox.claim()).thenReturn(delivery);
+        when(outbox.canSend(delivery)).thenReturn(true);
+        when(sender.send(delivery)).thenReturn(new EmailSendResult(EmailSendResult.Outcome.ACCEPTED, "ses-id"));
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("database unavailable"))
+                .when(outbox).sent(delivery, "ses-id");
+        var worker = new SesEmailWorker(settings(), outbox, sender, mock(EmailRetentionService.class));
+        assertThrows(org.springframework.dao.DataAccessResourceFailureException.class, worker::dispatch);
+        verify(sender, times(1)).send(delivery);
+        verify(outbox, never()).failed(any(), anyBoolean());
+    }
+
+    @Test void missingAcceptanceReceiptRequiresReview() {
+        var client = mock(SesV2Client.class);
+        when(client.sendEmail(any(SendEmailRequest.class))).thenReturn(SendEmailResponse.builder().build());
+        assertEquals(EmailSendResult.Outcome.REVIEW, new SesEmailSender(settings(), client).send(delivery()).outcome());
     }
 
     private EmailNotificationSettings settings() {
@@ -88,6 +109,6 @@ class SesEmailWorkerTests {
         return settings;
     }
     private EmailOutbox.Delivery delivery() {
-        return new EmailOutbox.Delivery(UUID.randomUUID(), "player@example.com", "Confirma tu dirección", "<p>Confirmar</p>", "Confirmar", 1, Instant.now());
+        return new EmailOutbox.Delivery(UUID.randomUUID(), "player@example.com", "Confirma tu direcciÃ³n", "<p>Confirmar</p>", "Confirmar", 1, Instant.now());
     }
 }

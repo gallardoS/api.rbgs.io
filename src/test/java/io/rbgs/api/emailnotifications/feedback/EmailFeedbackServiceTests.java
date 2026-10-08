@@ -23,6 +23,7 @@ class EmailFeedbackServiceTests {
     @Autowired EmailFeedbackService feedback;
     @Autowired EmailSubscriptionService subscriptions;
     @Autowired EmailOutbox outbox;
+    @Autowired io.rbgs.api.emailnotifications.delivery.EmailRetentionService retention;
     @Autowired EmailSuppressionRepository suppressions;
     @Autowired EmailFeedbackEventRepository events;
     @Autowired JdbcTemplate jdbc;
@@ -112,7 +113,7 @@ class EmailFeedbackServiceTests {
         var row = events.findById(id).orElseThrow();
         row.setReceivedAt(Instant.now().minusSeconds(91 * 86400L));
         events.saveAndFlush(row);
-        outbox.purge();
+        retention.purge();
         assertEquals(0, events.count());
         assertEquals(1, suppressions.count());
     }

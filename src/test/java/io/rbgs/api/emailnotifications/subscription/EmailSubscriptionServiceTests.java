@@ -13,7 +13,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
+import io.rbgs.api.emailnotifications.error.EmailNotificationException;
+import io.rbgs.api.emailnotifications.error.EmailNotificationException.Reason;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.when;
 class EmailSubscriptionServiceTests {
     @Autowired EmailSubscriptionService service;
     @Autowired EmailOutbox outbox;
+    @Autowired io.rbgs.api.emailnotifications.delivery.EmailRetentionService retention;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean EmailNotificationSettings settings;
     @MockitoBean SesEmailWorker worker;
@@ -48,7 +50,7 @@ class EmailSubscriptionServiceTests {
         String confirmation = token(text, "season-confirm");
         String unsubscribe = token(text, "season-unsubscribe");
         assertEquals(EmailTokens.hash(confirmation), jdbc.queryForObject("SELECT confirmation_hash FROM rbgs.email_subscriptions", String.class));
-        assertThrows(ResponseStatusException.class, service::launch);
+        assertThrows(EmailNotificationException.class, service::launch);
         service.confirm(confirmation);
         service.confirm(confirmation);
         when(settings.seasonLive()).thenReturn(true);
@@ -61,7 +63,7 @@ class EmailSubscriptionServiceTests {
         service.unsubscribe(unsubscribe);
         service.unsubscribe(unsubscribe);
         assertNull(outbox.claim());
-        assertThrows(ResponseStatusException.class, () -> service.confirm(confirmation));
+        assertThrows(EmailNotificationException.class, () -> service.confirm(confirmation));
         assertEquals(0, service.launch());
         assertNotNull(id);
     }
@@ -71,10 +73,10 @@ class EmailSubscriptionServiceTests {
         String firstText = jdbc.queryForObject("SELECT plain_text FROM rbgs.email_outbox", String.class);
         String old = token(firstText, "season-confirm");
         jdbc.update("UPDATE rbgs.email_subscriptions SET confirmation_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 hour', requested_at = CURRENT_TIMESTAMP - INTERVAL '1 hour'");
-        assertThrows(ResponseStatusException.class, () -> service.confirm(old));
+        assertThrows(EmailNotificationException.class, () -> service.confirm(old));
         service.unsubscribe(token(firstText, "season-unsubscribe"));
         service.subscribe("player@example.com", "en", "");
-        assertThrows(ResponseStatusException.class, () -> service.confirm(old));
+        assertThrows(EmailNotificationException.class, () -> service.confirm(old));
         EmailOutbox.Delivery delivery = outbox.claim();
         assertNotNull(delivery);
         String fresh = token(delivery.text(), "season-confirm");
@@ -87,7 +89,7 @@ class EmailSubscriptionServiceTests {
         service.subscribe("one@example.com", "en", "");
         String text = jdbc.queryForObject("SELECT plain_text FROM rbgs.email_outbox", String.class);
         service.unsubscribe(token(text, "season-unsubscribe"));
-        assertThrows(ResponseStatusException.class, () -> service.confirm(token(text, "season-confirm")));
+        assertThrows(EmailNotificationException.class, () -> service.confirm(token(text, "season-confirm")));
         assertNull(outbox.claim());
     }
 
@@ -130,7 +132,7 @@ class EmailSubscriptionServiceTests {
         assertNull(outbox.claim());
         assertEquals("REVIEW", jdbc.queryForObject("SELECT status FROM rbgs.email_outbox", String.class));
         jdbc.update("UPDATE rbgs.email_subscriptions SET requested_at = CURRENT_TIMESTAMP - INTERVAL '8 days'");
-        outbox.purge();
+        retention.purge();
         assertEquals(0, count("email_subscriptions"));
         assertEquals(0, count("email_outbox"));
     }
@@ -151,7 +153,7 @@ class EmailSubscriptionServiceTests {
         service.subscribe("bot@example.com", "en", "https://spam.example");
         assertEquals(0, count("email_subscriptions"));
         when(settings.enabled()).thenReturn(false);
-        assertThrows(ResponseStatusException.class, () -> service.subscribe("one@example.com", "en", ""));
+        assertThrows(EmailNotificationException.class, () -> service.subscribe("one@example.com", "en", ""));
         assertEquals(0, count("email_subscriptions"));
     }
 

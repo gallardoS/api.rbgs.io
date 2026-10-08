@@ -46,14 +46,14 @@ public interface EmailOutboxRepository extends JpaRepository<EmailOutboxEntity, 
     @Query(value = """
                 SELECT o.* FROM rbgs.email_outbox o
                 JOIN rbgs.email_subscriptions s ON s.id = o.subscription_id
-                WHERE o.status = 'PENDING' AND o.next_attempt_at <= CURRENT_TIMESTAMP
+                WHERE o.status = 'PENDING' AND o.next_attempt_at <= :now
                 AND NOT EXISTS (SELECT 1 FROM rbgs.email_suppressions e WHERE e.email = s.email)
                 AND (:quota = false OR o.first_attempt_at IS NOT NULL)
                 AND (o.kind = 'CONFIRMATION' OR (s.confirmed_at IS NOT NULL AND :live = true))
                 ORDER BY CASE WHEN o.kind = 'CONFIRMATION' THEN 0 ELSE 1 END, o.created_at
                 LIMIT 1 FOR UPDATE OF o SKIP LOCKED
                 """, nativeQuery = true)
-    List<EmailOutboxEntity> findNext(@Param("quota") boolean quota, @Param("live") boolean live);
+    List<EmailOutboxEntity> findNext(@Param("quota") boolean quota, @Param("live") boolean live, @Param("now") Instant now);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update EmailOutboxEntity o set o.status = io.rbgs.api.emailnotifications.delivery.EmailStatus.SENT, o.sentAt = :now, o.providerId = :provider, o.html = null, o.plainText = null where o.id = :id and o.status = io.rbgs.api.emailnotifications.delivery.EmailStatus.INFLIGHT")
