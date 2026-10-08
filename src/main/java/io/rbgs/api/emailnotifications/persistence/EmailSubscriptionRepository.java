@@ -27,6 +27,7 @@ public interface EmailSubscriptionRepository extends JpaRepository<EmailSubscrip
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             select s from EmailSubscriptionEntity s where s.confirmedAt is not null and s.unsubscribedAt is null
+            and not exists (select e.email from EmailSuppressionEntity e where e.email = s.email)
             and not exists (select o.id from EmailOutboxEntity o where o.subscription = s and o.kind = io.rbgs.api.emailnotifications.delivery.EmailKind.LAUNCH)
             """)
     List<EmailSubscriptionEntity> findLaunchRecipients();

@@ -2,6 +2,9 @@ package io.rbgs.api.foundation;
 
 import java.io.IOException;
 import java.util.List;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import io.rbgs.api.emailnotifications.feedback.EmailFeedbackController;
 
 import io.rbgs.api.identity.Account;
 import io.rbgs.api.identity.AccountService;
@@ -31,13 +34,15 @@ public class SecurityConfiguration {
             ObjectProvider<AccountService> accountServices,
             @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
+                .requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").permitAll()
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
                 .requestMatchers("/api/v1/characters/me").authenticated()
                 .requestMatchers("/api/v1/moderation/**").hasRole("MODERATOR")
                 .anyRequest().denyAll());
-        http.csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+        http.csrf(csrf -> csrf.ignoringRequestMatchers(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, EmailFeedbackController.PATH))
+                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()));
         http.httpBasic(AbstractHttpConfigurer::disable);
         http.formLogin(AbstractHttpConfigurer::disable);

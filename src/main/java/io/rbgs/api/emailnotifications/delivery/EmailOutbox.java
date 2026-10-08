@@ -4,6 +4,8 @@ import io.rbgs.api.emailnotifications.config.EmailNotificationSettings;
 import io.rbgs.api.emailnotifications.config.EmailPolicy;
 import io.rbgs.api.emailnotifications.persistence.EmailOutboxRepository;
 import io.rbgs.api.emailnotifications.persistence.EmailSubscriptionRepository;
+import io.rbgs.api.emailnotifications.persistence.EmailSuppressionRepository;
+import io.rbgs.api.emailnotifications.persistence.EmailFeedbackEventRepository;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -15,16 +17,21 @@ public class EmailOutbox {
     private final EmailOutboxRepository outbox;
     private final EmailSubscriptionRepository subscriptions;
     private final EmailNotificationSettings settings;
-    public EmailOutbox(EmailOutboxRepository outbox, EmailSubscriptionRepository subscriptions, EmailNotificationSettings settings) {
+    private final EmailSuppressionRepository suppressions;
+    private final EmailFeedbackEventRepository feedbackEvents;
+    public EmailOutbox(EmailOutboxRepository outbox, EmailSubscriptionRepository subscriptions, EmailNotificationSettings settings, EmailSuppressionRepository suppressions, EmailFeedbackEventRepository feedbackEvents) {
         this.outbox = outbox;
         this.subscriptions = subscriptions;
         this.settings = settings;
+        this.suppressions = suppressions;
+        this.feedbackEvents = feedbackEvents;
     }
 
     @Transactional
     public Delivery claim() {
         outbox.lockReservations();
         outbox.cancelInvalid(Instant.now());
+        outbox.cancelSuppressed();
         outbox.reviewExpiredLeases(Instant.now());
         boolean quota = outbox.countByFirstAttemptAtAfter(Instant.now().minus(EmailPolicy.QUOTA_WINDOW)) >= settings.dailyLimit();
         var rows = outbox.findNext(quota, settings.seasonLive());
@@ -40,6 +47,10 @@ public class EmailOutbox {
         return delivery;
     }
 
+    public boolean canSend(Delivery delivery) {
+        return !suppressions.existsById(delivery.email()) && outbox.existsByIdAndStatus(delivery.id(), EmailStatus.INFLIGHT);
+    }
+
     public void sent(Delivery delivery, String providerId) { outbox.markSent(providerId, delivery.id(), Instant.now()); }
 
     public void failed(Delivery delivery, boolean permanent) {
@@ -53,5 +64,6 @@ public class EmailOutbox {
     public void purge() {
         subscriptions.purgeExpired(Instant.now().minus(EmailPolicy.PENDING_RETENTION), Instant.now().minus(EmailPolicy.COMPLETED_RETENTION));
         outbox.scrubReviewPayloads(Instant.now().minus(EmailPolicy.PENDING_RETENTION));
+        feedbackEvents.deleteByReceivedAtBefore(Instant.now().minus(EmailPolicy.FEEDBACK_RETENTION));
     }
 }

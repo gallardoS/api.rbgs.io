@@ -6,6 +6,25 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /email-notifications/feedback:
+    post:
+      operationId: receiveSesFeedback
+      summary: Receive signed Amazon SNS bounce and complaint notifications
+      description: AWS-only webhook. No session or CSRF token; the complete SNS envelope signature, expected topic ARN and source account are verified before processing. Raw message delivery must be disabled. Subscription confirmation is automatic for the configured topic. Repeated SNS message IDs are idempotent. Maximum request body is 256 KiB.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string, description: Signed SNS JSON envelope }
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Subscription confirmed or feedback durably processed }
+        '400': { description: Invalid SNS or SES payload }
+        '403': { description: Untrusted topic, certificate URL or signature }
+        '409': { description: Feedback subscription was removed }
+        '413': { description: Payload too large }
+        '503': { description: Feedback not configured or temporary AWS connection failure }
   /season-notifications:
     get:
       operationId: getSeasonNotificationStatus

@@ -27,7 +27,7 @@ public class SesEmailWorker {
     public void dispatch() {
         if (!settings.enabled()) return;
         EmailOutbox.Delivery delivery = outbox.claim();
-        if (delivery == null) return;
+        if (delivery == null || !outbox.canSend(delivery)) return;
         try {
             var response = client.sendEmail(SendEmailRequest.builder()
                     .fromEmailAddress(settings.from())

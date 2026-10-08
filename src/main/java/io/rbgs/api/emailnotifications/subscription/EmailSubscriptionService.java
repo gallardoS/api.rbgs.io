@@ -8,6 +8,7 @@ import io.rbgs.api.emailnotifications.persistence.EmailCampaignEntity;
 import io.rbgs.api.emailnotifications.persistence.EmailCampaignRepository;
 import io.rbgs.api.emailnotifications.persistence.EmailOutboxRepository;
 import io.rbgs.api.emailnotifications.persistence.EmailSubscriptionRepository;
+import io.rbgs.api.emailnotifications.persistence.EmailSuppressionRepository;
 
 import java.time.Instant;
 import java.util.Locale;
@@ -25,14 +26,16 @@ public class EmailSubscriptionService {
     private final EmailNotificationSettings settings;
     private final EmailQueue mail;
     private final EmailTokens tokens;
+    private final EmailSuppressionRepository suppressions;
 
-    public EmailSubscriptionService(EmailSubscriptionRepository subscriptions, EmailCampaignRepository campaigns, EmailOutboxRepository outbox, EmailNotificationSettings settings, EmailQueue mail, EmailTokens tokens) {
+    public EmailSubscriptionService(EmailSubscriptionRepository subscriptions, EmailCampaignRepository campaigns, EmailOutboxRepository outbox, EmailNotificationSettings settings, EmailQueue mail, EmailTokens tokens, EmailSuppressionRepository suppressions) {
         this.subscriptions = subscriptions;
         this.campaigns = campaigns;
         this.outbox = outbox;
         this.settings = settings;
         this.mail = mail;
         this.tokens = tokens;
+        this.suppressions = suppressions;
     }
 
     @Transactional
@@ -41,6 +44,7 @@ public class EmailSubscriptionService {
         requireEnabled();
         if (settings.seasonLive()) throw new ResponseStatusException(HttpStatus.CONFLICT, "Season already started");
         String email = address.strip().toLowerCase(Locale.ROOT);
+        if (suppressions.existsById(email)) return;
         String confirmation = tokens.confirmation();
         UUID id = UUID.randomUUID();
         subscriptions.insertIfAbsent(id, email, language, EmailTokens.hash(confirmation), Instant.now().plus(EmailPolicy.CONFIRMATION_LIFETIME));
@@ -65,7 +69,7 @@ public class EmailSubscriptionService {
     public void confirm(String token) {
         campaigns.lockLaunch();
         var row = subscriptions.findByConfirmationHash(EmailTokens.hash(token)).orElseThrow(this::invalidLink);
-        if (row.getUnsubscribedAt() != null) throw invalidLink();
+        if (row.getUnsubscribedAt() != null || suppressions.existsById(row.getEmail())) throw invalidLink();
         if (row.getConfirmedAt() != null) return;
         if (row.getConfirmationExpiresAt().isBefore(Instant.now())) throw invalidLink();
         row.setConfirmedAt(Instant.now());

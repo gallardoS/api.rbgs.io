@@ -33,6 +33,7 @@ class SesEmailWorkerTests {
         var client = mock(SesV2Client.class);
         var delivery = delivery();
         when(outbox.claim()).thenReturn(delivery);
+        when(outbox.canSend(delivery)).thenReturn(true);
         when(client.sendEmail(any(SendEmailRequest.class))).thenReturn(SendEmailResponse.builder().messageId("ses-id").build());
         var worker = new SesEmailWorker(settings, outbox, client);
         worker.dispatch();
@@ -50,6 +51,7 @@ class SesEmailWorkerTests {
         var client = mock(SesV2Client.class);
         var delivery = delivery();
         when(outbox.claim()).thenReturn(delivery);
+        when(outbox.canSend(delivery)).thenReturn(true);
         when(client.sendEmail(any(SendEmailRequest.class)))
                 .thenThrow(TooManyRequestsException.builder().message("throttled").build())
                 .thenThrow(new RuntimeException("response lost"));
@@ -59,6 +61,14 @@ class SesEmailWorkerTests {
         worker.dispatch();
         verify(outbox).failed(delivery, true);
         verify(outbox, never()).sent(any(), any());
+    }
+
+    @Test void suppressionAfterClaimPreventsSending() {
+        var outbox = mock(EmailOutbox.class);
+        var client = mock(SesV2Client.class);
+        when(outbox.claim()).thenReturn(delivery());
+        new SesEmailWorker(settings(), outbox, client).dispatch();
+        verifyNoInteractions(client);
     }
 
     @Test void explicitEnablementAndRegionAreRequired() {

@@ -12,10 +12,19 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public interface EmailOutboxRepository extends JpaRepository<EmailOutboxEntity, UUID> {
     boolean existsBySubscriptionIdAndKind(UUID subscriptionId, EmailKind kind);
+    boolean existsByIdAndStatus(UUID id, EmailStatus status);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update EmailOutboxEntity o set o.status = io.rbgs.api.emailnotifications.delivery.EmailStatus.CANCELLED, o.html = null, o.plainText = null where o.subscription.id = :id and o.status in (io.rbgs.api.emailnotifications.delivery.EmailStatus.PENDING, io.rbgs.api.emailnotifications.delivery.EmailStatus.INFLIGHT) and (:kind is null or o.kind = :kind)")
     int cancel(@Param("id") UUID id, @Param("kind") EmailKind kind);
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update EmailOutboxEntity o set o.status = io.rbgs.api.emailnotifications.delivery.EmailStatus.CANCELLED, o.html = null, o.plainText = null
+            where o.status in (io.rbgs.api.emailnotifications.delivery.EmailStatus.PENDING, io.rbgs.api.emailnotifications.delivery.EmailStatus.INFLIGHT)
+            and exists (select s.email from EmailSuppressionEntity s where s.email = o.subscription.email)
+            """)
+    int cancelSuppressed();
+
     @Query(value = "SELECT 1 FROM pg_advisory_xact_lock(7251901)", nativeQuery = true)
     int lockReservations();
 
@@ -38,6 +47,7 @@ public interface EmailOutboxRepository extends JpaRepository<EmailOutboxEntity, 
                 SELECT o.* FROM rbgs.email_outbox o
                 JOIN rbgs.email_subscriptions s ON s.id = o.subscription_id
                 WHERE o.status = 'PENDING' AND o.next_attempt_at <= CURRENT_TIMESTAMP
+                AND NOT EXISTS (SELECT 1 FROM rbgs.email_suppressions e WHERE e.email = s.email)
                 AND (:quota = false OR o.first_attempt_at IS NOT NULL)
                 AND (o.kind = 'CONFIRMATION' OR (s.confirmed_at IS NOT NULL AND :live = true))
                 ORDER BY CASE WHEN o.kind = 'CONFIRMATION' THEN 0 ELSE 1 END, o.created_at

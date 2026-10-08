@@ -40,6 +40,8 @@ spring:
 
 rbgs:
   notifications:
+    feedback:
+      topic-arn: ${RBGS_SES_FEEDBACK_TOPIC_ARN:}
     sending-enabled: ${RBGS_EMAIL_ENABLED:false}
     region: ${RBGS_SES_REGION:}
     from: ${RBGS_EMAIL_FROM:}

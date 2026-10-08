@@ -3,6 +3,7 @@ package io.rbgs.api.emailnotifications.delivery;
 import io.rbgs.api.emailnotifications.persistence.EmailOutboxEntity;
 import io.rbgs.api.emailnotifications.persistence.EmailOutboxRepository;
 import io.rbgs.api.emailnotifications.persistence.EmailSubscriptionRepository;
+import io.rbgs.api.emailnotifications.persistence.EmailSuppressionRepository;
 import io.rbgs.api.emailnotifications.subscription.EmailTokens;
 import io.rbgs.api.emailnotifications.template.EmailMessage;
 import io.rbgs.api.emailnotifications.template.EmailTemplates;
@@ -16,21 +17,27 @@ import org.springframework.transaction.annotation.Transactional;
 public class EmailQueue {
     private final EmailOutboxRepository outbox;
     private final EmailSubscriptionRepository subscriptions;
+    private final EmailSuppressionRepository suppressions;
     private final EmailTokens tokens;
     private final EmailTemplates templates;
-    public EmailQueue(EmailOutboxRepository outbox, EmailSubscriptionRepository subscriptions, EmailTokens tokens, EmailTemplates templates) {
+    public EmailQueue(EmailOutboxRepository outbox, EmailSubscriptionRepository subscriptions, EmailTokens tokens, EmailTemplates templates, EmailSuppressionRepository suppressions) {
         this.outbox = outbox;
         this.subscriptions = subscriptions;
         this.tokens = tokens;
         this.templates = templates;
+        this.suppressions = suppressions;
     }
     public void confirmation(UUID id, String language, String token) {
+        if (suppressed(id)) return;
         enqueue(id, EmailKind.CONFIRMATION, templates.confirmation(language, token, unsubscribeToken(id)));
     }
     public void launch(UUID id, String language) {
+        if (suppressed(id)) return;
         if (outbox.existsBySubscriptionIdAndKind(id, EmailKind.LAUNCH)) return;
         enqueue(id, EmailKind.LAUNCH, templates.launch(language, unsubscribeToken(id)));
     }
+    private boolean suppressed(UUID id) { return suppressions.existsById(subscriptions.getReferenceById(id).getEmail()); }
+
     private String unsubscribeToken(UUID id) {
         String token = tokens.unsubscribe(id);
         subscriptions.setUnsubscribeHash(id, EmailTokens.hash(token));
