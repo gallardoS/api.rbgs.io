@@ -109,6 +109,6 @@ class SesEmailWorkerTests {
         return settings;
     }
     private EmailOutbox.Delivery delivery() {
-        return new EmailOutbox.Delivery(UUID.randomUUID(), "player@example.com", "Confirma tu direcciÃ³n", "<p>Confirmar</p>", "Confirmar", 1, Instant.now());
+        return new EmailOutbox.Delivery(UUID.randomUUID(), "player@example.com", "Confirma tu dirección", "<p>Confirmar</p>", "Confirmar", 1, Instant.now());
     }
 }
