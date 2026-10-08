@@ -62,7 +62,7 @@ public class EmailSubscriptionController {
     public Map<String, Boolean> configuration() { return Map.of("configured", settings.enabled(), "seasonLive", settings.seasonLive()); }
 
     public record Subscription(@NotBlank @Email @Size(max = 254) String email,
-            @NotBlank @Pattern(regexp = "en|es") String language,
+            @NotBlank @Pattern(regexp = "en|es|fr") String language,
             @Size(max = 200) String website) {}
     public record Link(@NotBlank @Pattern(regexp = "[A-Za-z0-9_-]{43}") String token) {}
 }

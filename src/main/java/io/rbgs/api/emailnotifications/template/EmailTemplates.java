@@ -30,7 +30,7 @@ public class EmailTemplates {
         return render("launch", language, links.play(language), links.unsubscribe(language, unsubscribeToken));
     }
     private EmailMessage render(String kind, String language, String actionUrl, String unsubscribeUrl) {
-        String locale = "es".equals(language) ? "es" : "en";
+        String locale = switch (language) { case "es", "fr" -> language; default -> "en"; };
         var messages = ResourceBundle.getBundle("emails.messages", Locale.forLanguageTag(locale),
                 ResourceBundle.Control.getNoFallbackControl(ResourceBundle.Control.FORMAT_PROPERTIES));
         String heading = messages.getString(kind + ".heading");

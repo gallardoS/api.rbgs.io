@@ -29,8 +29,11 @@ class EmailSubscriptionControllerTests {
         mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json").content(JSON))
                 .andExpect(status().isAccepted());
         verify(service).subscribe("player@example.com", "es", "");
+        mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json")
+                .content(JSON.replace("\"es\"", "\"fr\""))).andExpect(status().isAccepted());
+        verify(service).subscribe("player@example.com", "fr", "");
         for (String invalid : new String[] {
-                JSON.replace("player@example.com", "not-an-email"), JSON.replace("\"es\"", "\"fr\"")}) {
+                JSON.replace("player@example.com", "not-an-email"), JSON.replace("\"es\"", "\"de\"")}) {
             mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json").content(invalid))
                     .andExpect(status().isBadRequest());
         }
