@@ -36,7 +36,7 @@ public class SecurityConfiguration {
             @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH).permitAll()
-                .requestMatchers("/api/v1/health", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
+                .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
                 .requestMatchers("/api/v1/characters/me").access(new AccountAuthorizationManager(accountServices, null, false))

@@ -186,7 +186,8 @@ paths:
   /health:
     get:
       operationId: getHealth
-      summary: Check API availability
+      summary: Check API process liveness
+      description: Does not check PostgreSQL or ranked-play availability. Use readiness for dependency availability.
       responses:
         '200':
           description: API process is serving requests
@@ -199,6 +200,38 @@ paths:
                   status:
                     type: string
                     const: ok
+  /readiness:
+    get:
+      operationId: getReadiness
+      summary: Check API database readiness
+      description: Public uncached dependency check using the internal PostgreSQL health contributor. Returns only a status, without database details. Does not establish Blizzard availability, character ownership, ranked readiness or measured capacity.
+      responses:
+        '200':
+          description: PostgreSQL health is UP
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: { type: string, const: ready }
+        '503':
+          description: PostgreSQL health is unavailable, unknown or missing
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: { type: string, const: unavailable }
 components:
   schemas:
     SeasonNotificationLink:
