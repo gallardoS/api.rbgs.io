@@ -6,6 +6,41 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /play/context:
+    get:
+      operationId: getPlaySelectionContext
+      summary: Get the authenticated account's configured season and saved selection
+      description: Requires a current active account. Establishes the CSRF cookie. Cache-Control is no-store. No configured season returns season and selection as null. Ownership verification is currently UNVERIFIED and matchmakingAvailable is always false; Classic data cannot authorize selection.
+      responses:
+        '200':
+          description: Selection context; no queue eligibility is implied
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaySelectionContext' }
+        '401': { description: No Battle.net session }
+        '403': { description: Missing or inactive account }
+        '503': { description: Configured season does not exist }
+  /me/selection:
+    put:
+      operationId: saveSeasonSelection
+      summary: Persist the authenticated account's character declaration or verified reference
+      description: Requires X-XSRF-TOKEN and a current active account. Account identity is derived from the session. Send expectedVersion null for first creation and the returned version thereafter, plus the current seasonVersion. ACCOUNT mode requires declaration and no characterId; CHARACTER mode requires characterId and no declaration, associated Forever identity and explicit authenticated ownership verification. The production Forever verifier currently rejects verification with 503. Saving never opens a season or enables matchmaking. Cache-Control is no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeasonSelectionRequest' }
+      responses:
+        '200':
+          description: Saved selection and its version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonSelection' }
+        '400': { description: Invalid declaration, role, mode or character reference }
+        '401': { description: No Battle.net session }
+        '403': { description: Missing or inactive account or invalid CSRF token }
+        '409': { description: No configured season or stale selection or season version; fetch context before retrying }
+        '503': { description: Configured season missing or authenticated Forever verification unavailable }
   /email-notifications/feedback:
     post:
       operationId: receiveSesFeedback
@@ -234,6 +269,59 @@ paths:
                   status: { type: string, const: unavailable }
 components:
   schemas:
+    PlaySelectionContext:
+      type: object
+      required: [season, selection, ownershipVerification, matchmakingAvailable]
+      properties:
+        season:
+          oneOf:
+            - { type: 'null' }
+            - { $ref: '#/components/schemas/SelectionSeason' }
+        selection:
+          oneOf:
+            - { type: 'null' }
+            - { $ref: '#/components/schemas/SeasonSelection' }
+        ownershipVerification: { type: string, const: UNVERIFIED }
+        matchmakingAvailable: { type: boolean, const: false }
+    SelectionSeason:
+      type: object
+      required: [id, name, kind, ratingSubjectType, version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [BETA, PUBLIC] }
+        ratingSubjectType: { type: string, enum: [ACCOUNT, CHARACTER] }
+        version: { type: integer, format: int64, minimum: 0 }
+    SeasonSelectionRequest:
+      type: object
+      required: [seasonId, seasonVersion, role, captainConsent]
+      properties:
+        seasonId: { type: string, format: uuid }
+        seasonVersion: { type: integer, format: int64, minimum: 0 }
+        expectedVersion: { type: [integer, 'null'], format: int64, minimum: 0, description: Null for first creation; saved version for replacement }
+        characterId: { type: [string, 'null'], format: uuid }
+        declaration:
+          type: [object, 'null']
+          required: [name, realm]
+          properties:
+            name: { type: string, minLength: 1, maxLength: 100, description: Nonblank text without control characters }
+            realm: { type: string, minLength: 1, maxLength: 100, description: Nonblank text without control characters }
+        role: { type: string, enum: [FC, HEALER, DPS] }
+        captainConsent: { type: boolean }
+    SeasonSelection:
+      type: object
+      required: [characterId, name, realm, source, ratingSubjectType, ratingSubjectId, role, captainConsent, version, validForSeason]
+      properties:
+        characterId: { type: string, format: uuid, description: Internal identity; not a Blizzard ID or a game GUID }
+        name: { type: string }
+        realm: { type: string }
+        source: { type: string, enum: [DECLARED, BLIZZARD_VERIFIED] }
+        ratingSubjectType: { type: string, enum: [ACCOUNT, CHARACTER] }
+        ratingSubjectId: { type: string, format: uuid, description: Prospective account or character subject; no rating record is created }
+        role: { type: string, enum: [FC, HEALER, DPS] }
+        captainConsent: { type: boolean }
+        version: { type: integer, format: int64, minimum: 0 }
+        validForSeason: { type: boolean, description: Stored mode/provenance match the current season; not proof of fresh ownership, setup readiness or queue eligibility }
     SeasonNotificationLink:
       type: object
       required: [token]

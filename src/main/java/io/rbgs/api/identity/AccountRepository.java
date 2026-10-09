@@ -9,6 +9,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface AccountRepository extends JpaRepository<AccountEntity, UUID> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from AccountEntity a where a.id = :id")
+    Optional<AccountEntity> findForSelection(@Param("id") UUID id);
+
     Optional<AccountEntity> findByProviderIssuerAndProviderSubject(String issuer, String subject);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
