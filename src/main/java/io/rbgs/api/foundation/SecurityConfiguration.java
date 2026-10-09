@@ -7,6 +7,7 @@ import org.springframework.security.web.servlet.util.matcher.PathPatternRequestM
 import io.rbgs.api.emailnotifications.feedback.EmailFeedbackController;
 
 import io.rbgs.api.identity.Account;
+import io.rbgs.api.identity.AccountAuthorizationManager;
 import io.rbgs.api.identity.AccountService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
@@ -36,10 +37,10 @@ public class SecurityConfiguration {
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
-                .requestMatchers("/api/v1/auth/me").permitAll()
+                .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
-                .requestMatchers("/api/v1/characters/me").authenticated()
-                .requestMatchers("/api/v1/moderation/**").hasRole("MODERATOR")
+                .requestMatchers("/api/v1/characters/me").access(new AccountAuthorizationManager(accountServices, null, false))
+                .requestMatchers("/api/v1/moderation/**").access(new AccountAuthorizationManager(accountServices, "MODERATOR", false))
                 .anyRequest().denyAll());
         http.csrf(csrf -> csrf.ignoringRequestMatchers(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, EmailFeedbackController.PATH))
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())

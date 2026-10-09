@@ -21,6 +21,7 @@ class EmailSubscriptionControllerTests {
     @Autowired MockMvc mvc;
     @MockitoBean EmailSubscriptionService service;
     @MockitoBean EmailNotificationSettings settings;
+    @MockitoBean io.rbgs.api.identity.AccountService accounts;
     private static final String JSON = "{\"email\":\"player@example.com\",\"language\":\"es\",\"website\":\"\"}";
 
     @Test void explicitNotificationRequestRequiresCsrfAndValidEmailAndLanguage() throws Exception {
@@ -69,7 +70,11 @@ class EmailSubscriptionControllerTests {
         mvc.perform(post(launch).with(csrf())).andExpect(status().isUnauthorized());
         mvc.perform(post(launch).with(csrf()).with(oidcLogin())).andExpect(status().isForbidden());
         when(service.launch()).thenReturn(3);
-        mvc.perform(post(launch).with(csrf()).with(oidcLogin().authorities(() -> "ROLE_MODERATOR")))
+        when(accounts.findByIdentity("https://idp.example", "user"))
+                .thenReturn(new io.rbgs.api.identity.Account(java.util.UUID.randomUUID(), "Player#1234", "EU", "ACTIVE", "MODERATOR"));
+        mvc.perform(post(launch).with(csrf()).with(oidcLogin()
+                .idToken(tokenValue -> tokenValue.issuer("https://idp.example"))
+                .authorities(() -> "ROLE_MODERATOR")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.queued").value(3));
     }
 

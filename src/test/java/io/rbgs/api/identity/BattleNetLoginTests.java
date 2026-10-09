@@ -87,6 +87,8 @@ class BattleNetLoginTests {
         UUID id = UUID.randomUUID();
         when(accounts.upsert(eq(issuer), eq("stable-subject"), anyString()))
                 .thenReturn(new Account(id, "Player#1234", "EU", "ACTIVE", "USER"));
+        when(accounts.findByIdentity(issuer, "stable-subject"))
+                .thenReturn(new Account(id, "Player#1234", "EU", "ACTIVE", "USER"));
         when(accounts.currentUser(org.mockito.ArgumentMatchers.any()))
                 .thenAnswer(call -> call.getArgument(0) == null ? null :
                         new io.rbgs.api.identity.dto.Profile(id, "Player#1234", "EU", "USER"));
@@ -175,6 +177,35 @@ class BattleNetLoginTests {
         mvc.perform(get("/login/oauth2/code/battle-net")
                 .param("code", "valid").param("state", login.state()).session(login.session()))
                 .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("http://localhost:5173/?auth=failed"));
+        mvc.perform(get("/api/v1/auth/me").session(login.session()))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void suspendedExistingSessionCanStillLogoutWithCsrf() throws Exception {
+        UUID id = UUID.randomUUID();
+        Account active = new Account(id, "Player#1234", "EU", "ACTIVE", "USER");
+        when(accounts.upsert(eq(issuer), eq("stable-subject"), anyString())).thenReturn(active);
+        when(accounts.findByIdentity(issuer, "stable-subject")).thenReturn(active);
+        when(accounts.currentUser(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(call -> call.getArgument(0) == null ? null :
+                        new io.rbgs.api.identity.dto.Profile(id, "Player#1234", "EU", "USER"));
+        Login login = startLogin();
+        mvc.perform(get("/login/oauth2/code/battle-net")
+                .param("code", "valid").param("state", login.state()).session(login.session()))
+                .andExpect(status().is3xxRedirection());
+        Cookie csrf = mvc.perform(get("/api/v1/auth/me").session(login.session()))
+                .andExpect(status().isOk()).andReturn().getResponse().getCookie("XSRF-TOKEN");
+        when(accounts.findByIdentity(issuer, "stable-subject"))
+                .thenReturn(new Account(id, "Player#1234", "EU", "SUSPENDED", "USER"));
+        mvc.perform(get("/api/v1/characters/me").session(login.session()))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/auth/me").session(login.session()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/auth/logout").session(login.session()).cookie(csrf))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/auth/logout").session(login.session()).cookie(csrf)
+                .header("X-XSRF-TOKEN", csrf.getValue())).andExpect(status().isNoContent());
         mvc.perform(get("/api/v1/auth/me").session(login.session()))
                 .andExpect(status().isNoContent());
     }

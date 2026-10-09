@@ -33,6 +33,8 @@ class AccountControllerTests {
     @Test
     void profileOnlyContainsPublicAccountFields() throws Exception {
         UUID id = UUID.randomUUID();
+        when(accounts.findByIdentity("https://idp.example", "stable-subject"))
+                .thenReturn(new Account(id, "Player#1234", "EU", "ACTIVE", "USER"));
         when(accounts.currentUser(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new io.rbgs.api.identity.dto.Profile(id, "Player#1234", "EU", "USER"));
         mvc.perform(get("/api/v1/auth/me").with(oidcLogin().idToken(token -> token
@@ -47,9 +49,15 @@ class AccountControllerTests {
     @Test
     void moderatorRouteRejectsAnonymousAndRegularUsers() throws Exception {
         mvc.perform(get("/api/v1/moderation/probe")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/moderation/probe").with(oidcLogin()))
-                .andExpect(status().isForbidden());
+        when(accounts.findByIdentity("https://idp.example", "user"))
+                .thenReturn(new Account(UUID.randomUUID(), "Player#1234", "EU", "ACTIVE", "USER"));
         mvc.perform(get("/api/v1/moderation/probe").with(oidcLogin()
+                .idToken(token -> token.issuer("https://idp.example"))))
+                .andExpect(status().isForbidden());
+        when(accounts.findByIdentity("https://idp.example", "user"))
+                .thenReturn(new Account(UUID.randomUUID(), "Player#1234", "EU", "ACTIVE", "MODERATOR"));
+        mvc.perform(get("/api/v1/moderation/probe").with(oidcLogin()
+                .idToken(token -> token.issuer("https://idp.example"))
                 .authorities(() -> "ROLE_MODERATOR"))).andExpect(status().isOk());
     }
 
