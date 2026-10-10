@@ -58,7 +58,7 @@ class SelectionIntegrationTests {
     private String request(String version, String name) {
         return """
             {"seasonId":"%s","seasonVersion":%d,"expectedVersion":%s,
-             "declaration":{"name":"%s","realm":"Fixture Realm"},"role":"HEALER","captainConsent":false}
+             "declaration":{"name":"%s","realm":"Normal"},"role":"HEALER","captainConsent":false}
             """.formatted(season.getId(), season.getVersion(), version, name);
     }
     private OAuth2AuthenticationToken authentication() {
@@ -104,6 +104,21 @@ class SelectionIntegrationTests {
             .andExpect(status().isForbidden());
     }
 
+    @Test void declarationAcceptsClassicRealmAndRejectsInvalidText() throws Exception {
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf())
+            .contentType("application/json").content(request("null", "Fixture").replace("Normal", "Classic Realm")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.realm").value("Classic Realm"))
+            .andExpect(jsonPath("$.source").value("DECLARED"));
+        for (String realm : List.of("", " ", "x".repeat(101))) {
+            mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf())
+                .contentType("application/json").content(request("0", "Fixture").replace("Normal", realm)))
+                .andExpect(status().isBadRequest());
+        }
+        mvc.perform(get("/api/v1/play/context").with(login()))
+            .andExpect(jsonPath("$.selection.realm").value("Classic Realm"))
+            .andExpect(jsonPath("$.selection.version").value(0));
+    }
+
     @Test void anotherAccountCannotReadOrOverwriteSelection() throws Exception {
         mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json").content(request("null","Private")))
             .andExpect(status().isOk());
@@ -135,7 +150,7 @@ class SelectionIntegrationTests {
         db.update("""
             INSERT INTO rbgs.character_identities(id, account_id, product, region, source, name, realm,
              provider_namespace, provider_realm_id, provider_character_id)
-            VALUES (?, ?, 'WOW_FOREVER','EU','BLIZZARD_VERIFIED','Fixture','Fixture Realm',
+            VALUES (?, ?, 'WOW_FOREVER','EU','BLIZZARD_VERIFIED','Fixture','Normal',
              'fixture-forever-eu','fixture-realm','fixture-character')
             """, id, account.id());
         String body = """
@@ -157,7 +172,7 @@ class SelectionIntegrationTests {
         var start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var command = new SelectionRequest(season.getId(),season.getVersion(),null,null,
-                new SelectionRequest.Declaration("Fixture","Fixture Realm"),MatchRole.DPS,false);
+                new SelectionRequest.Declaration("Fixture","Normal"),MatchRole.DPS,false);
             Callable<Integer> write = () -> {
                 ready.countDown();
                 assertTrue(start.await(10,TimeUnit.SECONDS));

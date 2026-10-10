@@ -305,7 +305,7 @@ components:
           required: [name, realm]
           properties:
             name: { type: string, minLength: 1, maxLength: 100, description: Nonblank text without control characters }
-            realm: { type: string, minLength: 1, maxLength: 100, description: Nonblank text without control characters }
+            realm: { type: string, minLength: 1, maxLength: 100, description: Provisional declaration uses the selected Classic character realm; not verified Forever ownership }
         role: { type: string, enum: [FC, HEALER, DPS] }
         captainConsent: { type: boolean }
     SeasonSelection:
