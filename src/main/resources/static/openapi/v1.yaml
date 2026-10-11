@@ -41,6 +41,42 @@ paths:
         '403': { description: Missing or inactive account or invalid CSRF token }
         '409': { description: No configured season or stale selection or season version; fetch context before retrying }
         '503': { description: Configured season missing or authenticated Forever verification unavailable }
+  /email-notifications/feedback/resend:
+    post:
+      operationId: receiveResendFeedback
+      summary: Receive signed Resend delivery feedback
+      description: Verifies the raw body with Svix before processing delivery, permanent bounce and complaint events. Requires a configured webhook secret.
+      security: []
+      parameters:
+        - in: header
+          name: svix-id
+          required: true
+          schema: {type: string}
+        - in: header
+          name: svix-timestamp
+          required: true
+          schema: {type: string}
+        - in: header
+          name: svix-signature
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '204':
+          description: Verified event processed or ignored
+        '400':
+          description: Invalid event payload
+        '403':
+          description: Invalid or expired signature
+        '413':
+          description: Payload exceeds 256 KiB
+        '503':
+          description: Webhook secret not configured
+
   /email-notifications/feedback:
     post:
       operationId: receiveSesFeedback

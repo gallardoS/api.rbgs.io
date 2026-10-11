@@ -7,6 +7,7 @@ import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Qualifier;
 import io.rbgs.api.emailnotifications.error.EmailNotificationException;
 import io.rbgs.api.emailnotifications.error.EmailNotificationException.Reason;
 import software.amazon.awssdk.messagemanager.sns.model.SnsSubscriptionConfirmation;
@@ -16,7 +17,7 @@ public class SnsSubscriptionConfirmer {
     private final EmailFeedbackSettings settings;
     private final HttpClient client;
 
-    public SnsSubscriptionConfirmer(EmailFeedbackSettings settings, HttpClient client) {
+    public SnsSubscriptionConfirmer(EmailFeedbackSettings settings, @Qualifier("snsSubscriptionHttpClient") HttpClient client) {
         this.settings = settings;
         this.client = client;
     }

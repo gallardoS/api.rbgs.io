@@ -2,7 +2,7 @@ package io.rbgs.api.emailnotifications.subscription;
 
 import io.rbgs.api.emailnotifications.config.EmailNotificationSettings;
 import io.rbgs.api.emailnotifications.delivery.EmailOutbox;
-import io.rbgs.api.emailnotifications.delivery.SesEmailWorker;
+import io.rbgs.api.emailnotifications.delivery.EmailDeliveryWorker;
 
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -27,7 +27,7 @@ class EmailSubscriptionServiceTests {
     @Autowired io.rbgs.api.emailnotifications.delivery.EmailRetentionService retention;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean EmailNotificationSettings settings;
-    @MockitoBean SesEmailWorker worker;
+    @MockitoBean EmailDeliveryWorker worker;
     @MockitoBean software.amazon.awssdk.services.sesv2.SesV2Client sesClient;
 
     @BeforeEach void setup() {

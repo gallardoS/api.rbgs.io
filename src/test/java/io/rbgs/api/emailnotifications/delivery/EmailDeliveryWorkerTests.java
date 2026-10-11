@@ -12,7 +12,7 @@ import software.amazon.awssdk.services.sesv2.model.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-class SesEmailWorkerTests {
+class EmailDeliveryWorkerTests {
     @Test void localCredentialsRequireBothFieldsAndPreserveSessionToken() {
         var configuration = new EmailNotificationSettings("eu-west-1", "notice@example.com", "a".repeat(32), "http://localhost:5173", false, 90, false);
         var configurationFactory = new SesEmailConfiguration(configuration);
@@ -35,7 +35,7 @@ class SesEmailWorkerTests {
         when(outbox.claim()).thenReturn(delivery);
         when(outbox.canSend(delivery)).thenReturn(true);
         when(client.sendEmail(any(SendEmailRequest.class))).thenReturn(SendEmailResponse.builder().messageId("ses-id").build());
-        var worker = new SesEmailWorker(settings, outbox, new SesEmailSender(settings, client), mock(EmailRetentionService.class));
+        var worker = new EmailDeliveryWorker(settings, outbox, new SesEmailSender(settings, client), mock(EmailRetentionService.class));
         worker.dispatch();
         var request = ArgumentCaptor.forClass(SendEmailRequest.class);
         verify(client).sendEmail(request.capture());
@@ -55,7 +55,7 @@ class SesEmailWorkerTests {
         when(client.sendEmail(any(SendEmailRequest.class)))
                 .thenThrow(TooManyRequestsException.builder().message("throttled").build())
                 .thenThrow(new RuntimeException("response lost"));
-        var worker = new SesEmailWorker(settings(), outbox, new SesEmailSender(settings(), client), mock(EmailRetentionService.class));
+        var worker = new EmailDeliveryWorker(settings(), outbox, new SesEmailSender(settings(), client), mock(EmailRetentionService.class));
         worker.dispatch();
         verify(outbox).failed(delivery, false);
         worker.dispatch();
@@ -67,7 +67,7 @@ class SesEmailWorkerTests {
         var outbox = mock(EmailOutbox.class);
         var client = mock(SesV2Client.class);
         when(outbox.claim()).thenReturn(delivery());
-        new SesEmailWorker(settings(), outbox, new SesEmailSender(settings(), client), mock(EmailRetentionService.class)).dispatch();
+        new EmailDeliveryWorker(settings(), outbox, new SesEmailSender(settings(), client), mock(EmailRetentionService.class)).dispatch();
         verifyNoInteractions(client);
     }
 
@@ -77,7 +77,7 @@ class SesEmailWorkerTests {
         var enabled = new EmailNotificationSettings("eu-west-1", "notice@example.com", "a".repeat(32), "https://rbgs.io", false, 90, true);
         assertTrue(enabled.enabled());
         var outbox = mock(EmailOutbox.class);
-        new SesEmailWorker(disabled, outbox, mock(EmailSender.class), mock(EmailRetentionService.class)).dispatch();
+        new EmailDeliveryWorker(disabled, outbox, mock(EmailSender.class), mock(EmailRetentionService.class)).dispatch();
         verifyNoInteractions(outbox);
     }
 
@@ -90,7 +90,7 @@ class SesEmailWorkerTests {
         when(sender.send(delivery)).thenReturn(new EmailSendResult(EmailSendResult.Outcome.ACCEPTED, "ses-id"));
         doThrow(new org.springframework.dao.DataAccessResourceFailureException("database unavailable"))
                 .when(outbox).sent(delivery, "ses-id");
-        var worker = new SesEmailWorker(settings(), outbox, sender, mock(EmailRetentionService.class));
+        var worker = new EmailDeliveryWorker(settings(), outbox, sender, mock(EmailRetentionService.class));
         assertThrows(org.springframework.dao.DataAccessResourceFailureException.class, worker::dispatch);
         verify(sender, times(1)).send(delivery);
         verify(outbox, never()).failed(any(), anyBoolean());

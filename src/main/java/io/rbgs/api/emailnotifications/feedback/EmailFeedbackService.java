@@ -25,7 +25,7 @@ public class EmailFeedbackService {
     }
 
     @Transactional
-    public void accept(UUID messageId, SesFeedback feedback) {
+    public void accept(UUID messageId, EmailFeedback feedback) {
         outbox.lockReservations();
         if (events.existsById(messageId)) return;
         Instant now = clock.instant();
@@ -52,7 +52,7 @@ public class EmailFeedbackService {
             }
             outbox.cancelSuppressed();
         }
-        LOG.info("SES feedback {} processed (type={}; detail={}; recipients={}; suppressed={})", messageId,
+        LOG.info("Email feedback {} processed (type={}; detail={}; recipients={}; suppressed={})", messageId,
                 feedback.type(), feedback.detail(), feedback.recipients().size(), feedback.suppressionReason() != null);
     }
 }

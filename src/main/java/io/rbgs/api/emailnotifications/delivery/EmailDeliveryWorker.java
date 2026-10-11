@@ -5,13 +5,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
-public class SesEmailWorker {
+public class EmailDeliveryWorker {
     private final EmailNotificationSettings settings;
     private final EmailOutbox outbox;
     private final EmailSender sender;
     private final EmailRetentionService retention;
 
-    public SesEmailWorker(EmailNotificationSettings settings, EmailOutbox outbox, EmailSender sender,
+    public EmailDeliveryWorker(EmailNotificationSettings settings, EmailOutbox outbox, EmailSender sender,
             EmailRetentionService retention) {
         this.settings = settings;
         this.outbox = outbox;

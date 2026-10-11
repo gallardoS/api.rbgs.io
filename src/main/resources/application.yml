@@ -40,6 +40,10 @@ spring:
 
 rbgs:
   notifications:
+    provider: ${RBGS_EMAIL_PROVIDER:ses}
+    resend-api-key: ${RBGS_RESEND_API_KEY:}
+    resend:
+      webhook-secret: ${RBGS_RESEND_WEBHOOK_SECRET:}
     feedback:
       topic-arn: ${RBGS_SES_FEEDBACK_TOPIC_ARN:}
     sending-enabled: ${RBGS_EMAIL_ENABLED:false}

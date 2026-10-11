@@ -9,7 +9,7 @@ import tools.jackson.databind.JsonNode;
 
 @Component
 public class SesFeedbackParser {
-    public SesFeedback parse(JsonNode event, String accountId) {
+    public EmailFeedback parse(JsonNode event, String accountId) {
         try {
             JsonNode mail = event.path("mail");
             if (!accountId.equals(mail.path("sendingAccountId").asText())) throw invalid();
@@ -41,7 +41,7 @@ public class SesFeedbackParser {
             }
             EmailSuppressionReason reason = type.equals("Bounce") && detail.equals("Permanent") ? EmailSuppressionReason.PERMANENT_BOUNCE
                     : type.equals("Complaint") && !detail.equals("not-spam") ? EmailSuppressionReason.COMPLAINT : null;
-            return new SesFeedback(type, provider, detail, timestamp, Set.copyOf(recipients), reason);
+            return new EmailFeedback(type, provider, detail, timestamp, Set.copyOf(recipients), reason);
         } catch (EmailNotificationException error) {
             throw error;
         } catch (RuntimeException error) {

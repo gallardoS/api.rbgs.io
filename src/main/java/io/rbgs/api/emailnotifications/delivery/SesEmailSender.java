@@ -8,6 +8,7 @@ import software.amazon.awssdk.services.sesv2.SesV2Client;
 import software.amazon.awssdk.services.sesv2.model.*;
 
 @Component
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "rbgs.notifications.provider", havingValue = "ses", matchIfMissing = true)
 public class SesEmailSender implements EmailSender {
     private static final Logger LOG = LoggerFactory.getLogger(SesEmailSender.class);
     private final EmailNotificationSettings settings;

@@ -32,7 +32,7 @@ public class EmailFeedbackProcessor {
         switch (message.type()) {
             case SUBSCRIPTION_CONFIRMATION -> subscriptions.confirm((SnsSubscriptionConfirmation) message);
             case NOTIFICATION -> {
-                SesFeedback feedback;
+                EmailFeedback feedback;
                 try { feedback = parser.parse(json.readTree(message.message()), settings.accountId()); }
                 catch (EmailNotificationException error) { throw error; }
                 catch (RuntimeException error) { throw new EmailNotificationException(Reason.INVALID_INPUT, "Invalid SES feedback event"); }

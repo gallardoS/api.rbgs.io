@@ -12,7 +12,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 
 @Configuration
-@org.springframework.boot.context.properties.EnableConfigurationProperties(EmailNotificationSettings.class)
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "rbgs.notifications.provider", havingValue = "ses", matchIfMissing = true)
 public class SesEmailConfiguration {
     private final EmailNotificationSettings settings;
     public SesEmailConfiguration(EmailNotificationSettings settings) { this.settings = settings; }

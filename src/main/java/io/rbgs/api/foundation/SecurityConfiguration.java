@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import io.rbgs.api.emailnotifications.feedback.EmailFeedbackController;
+import io.rbgs.api.emailnotifications.feedback.ResendFeedbackController;
 
 import io.rbgs.api.identity.Account;
 import io.rbgs.api.identity.AccountAuthorizationManager;
@@ -35,14 +36,15 @@ public class SecurityConfiguration {
             ObjectProvider<AccountService> accountServices,
             @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
-                .requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH).permitAll()
+                .requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
                 .requestMatchers("/api/v1/characters/me", "/api/v1/play/context", "/api/v1/me/selection").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/moderation/**").access(new AccountAuthorizationManager(accountServices, "MODERATOR", false))
                 .anyRequest().denyAll());
-        http.csrf(csrf -> csrf.ignoringRequestMatchers(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, EmailFeedbackController.PATH))
+        http.csrf(csrf -> csrf.ignoringRequestMatchers(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, EmailFeedbackController.PATH),
+                PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, ResendFeedbackController.PATH))
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()));
         http.httpBasic(AbstractHttpConfigurer::disable);

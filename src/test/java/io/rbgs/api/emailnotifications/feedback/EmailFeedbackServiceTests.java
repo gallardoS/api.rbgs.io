@@ -28,7 +28,7 @@ class EmailFeedbackServiceTests {
     @Autowired EmailFeedbackEventRepository events;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean EmailNotificationSettings settings;
-    @MockitoBean SesEmailWorker worker;
+    @MockitoBean EmailDeliveryWorker worker;
     @MockitoBean software.amazon.awssdk.services.sesv2.SesV2Client sesClient;
 
     @BeforeEach void setup() {
@@ -63,6 +63,7 @@ class EmailFeedbackServiceTests {
 
     @Test void complaintCancelsInflightDeliveryAndAWeakerBounceCannotReplaceIt() {
         subscriptions.subscribe("one@example.com", "en", "");
+        jdbc.update("UPDATE rbgs.email_outbox SET next_attempt_at = ?", java.sql.Timestamp.from(Instant.EPOCH));
         var delivery = outbox.claim();
         assertNotNull(delivery);
         assertTrue(outbox.canSend(delivery));
@@ -79,6 +80,7 @@ class EmailFeedbackServiceTests {
         assertEquals(2, events.count());
         assertEquals(0, suppressions.count());
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rbgs.email_outbox", Integer.class));
+        jdbc.update("UPDATE rbgs.email_outbox SET next_attempt_at = ?", java.sql.Timestamp.from(Instant.EPOCH));
         assertNotNull(outbox.claim());
     }
 
@@ -118,7 +120,7 @@ class EmailFeedbackServiceTests {
         assertEquals(1, suppressions.count());
     }
 
-    private SesFeedback event(String type, String detail, Set<String> recipients, EmailSuppressionReason reason) {
-        return new SesFeedback(type, "ses-id", detail, Instant.now(), recipients, reason);
+    private EmailFeedback event(String type, String detail, Set<String> recipients, EmailSuppressionReason reason) {
+        return new EmailFeedback(type, "ses-id", detail, Instant.now(), recipients, reason);
     }
 }
