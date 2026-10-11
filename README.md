@@ -29,7 +29,7 @@ The API defaults to `http://localhost:8080`. Use the local frontend at `http://l
 .\mvnw.cmd verify
 ```
 
-Integration tests require PostgreSQL and roll back their test transactions. CI runs `verify` with PostgreSQL; the Dockerfile builds the executable JAR without running tests.
+Integration tests use the local PostgreSQL configured through `.env` and `RBGS_DB_*`, sharing the existing development container. They roll back test transactions or explicitly remove committed fixtures, including concurrent login accounts. CI runs `verify` with PostgreSQL; the Dockerfile builds the executable JAR without running tests.
 
 ## Configuration
 

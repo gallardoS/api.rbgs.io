@@ -4,6 +4,7 @@ import io.rbgs.api.identity.Account;
 import io.rbgs.api.identity.AccountService;
 import io.rbgs.api.characters.WowCharacterLoader;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -18,6 +19,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 class ApiApplicationTests {
+
+	private String subject;
+
+	@AfterEach
+	void removeTestAccount() {
+		if (subject != null) {
+			jdbcTemplate.update("DELETE FROM rbgs.accounts WHERE provider_issuer = ? AND provider_subject = ?",
+					"https://oauth.battle.net", subject);
+		}
+	}
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
@@ -46,7 +57,7 @@ class ApiApplicationTests {
 
 	@Test
 	void changedBattleTagKeepsTheSameAccount() {
-		String subject = java.util.UUID.randomUUID().toString();
+		subject = java.util.UUID.randomUUID().toString();
 		Account first = accounts.upsert("https://oauth.battle.net", subject, "Original#1234");
 		Account renamed = accounts.upsert("https://oauth.battle.net", subject, "Changed#5678");
 		assertEquals(first.id(), renamed.id());
@@ -56,7 +67,7 @@ class ApiApplicationTests {
 
 	@Test
 	void loginDoesNotResetModerationState() {
-		String subject = java.util.UUID.randomUUID().toString();
+		subject = java.util.UUID.randomUUID().toString();
 		Account original = accounts.upsert("https://oauth.battle.net", subject, "Original#1234");
 		jdbcTemplate.update("UPDATE rbgs.accounts SET account_status = 'SUSPENDED', account_role = 'MODERATOR' WHERE id = ?",
 				original.id());
@@ -69,7 +80,7 @@ class ApiApplicationTests {
 
 	@Test
 	void concurrentLoginsKeepOneAccount() throws Exception {
-		String subject = java.util.UUID.randomUUID().toString();
+		subject = java.util.UUID.randomUUID().toString();
 		var ready = new java.util.concurrent.CountDownLatch(2);
 		var start = new java.util.concurrent.CountDownLatch(1);
 		try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
