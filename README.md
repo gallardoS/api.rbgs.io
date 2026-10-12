@@ -12,7 +12,7 @@ Java 21, Spring Boot 4.1, Spring MVC/Security, Spring Data JPA, PostgreSQL 17, F
 - `seasons`: season and rating-subject persistence.
 - `foundation`: security, CSRF and health checks.
 
-Matchmaking, ranked matches, ratings and groups currently have reserved packages. Evidence supports moderator-declared Darkspear tests, immutable reports and durable receipts. Persistence uses JPA repositories; PostgreSQL native queries handle queue locking. Flyway owns schema changes; Hibernate validates the schema and Open Session in View is disabled.
+Matchmaking, ranked matches, ratings and groups currently have reserved packages. Evidence supports moderator-declared Darkspear tests, immutable reports and durable receipts. Flyway owns schema changes; Hibernate validates the schema and Open Session in View is disabled.
 
 ## Local development
 
@@ -42,7 +42,7 @@ Integration tests use the local PostgreSQL configured through `.env` and `RBGS_D
 | `RBGS_SECURE_COOKIES` | Default `true`; use `false` for local HTTP. |
 | `RBGS_API_PORT` | API port; falls back to `PORT`, then `8080`. |
 | `RBGS_MANAGEMENT_PORT`, `RBGS_MANAGEMENT_ADDRESS` | Actuator listener; defaults to `8081`, `127.0.0.1`. |
-| `RBGS_CONTROLLED_CAPTURE_ENABLED` | Controlled Darkspear tests; default `false`. Moderator-created assignments and native evidence receipts; no rating. |
+| `RBGS_CONTROLLED_CAPTURE_ENABLED` | Controlled Darkspear capture tests; default `false`. Requires an active moderator to create assignments. Evidence enters review; no rating. |
 
 ## HTTP API and security
 
@@ -58,7 +58,11 @@ The contract is in [OpenAPI](src/main/resources/static/openapi/v1.yaml), served 
 | `/api/v1/moderation/season-notifications` | Moderator configuration and explicit launch action. |
 | `POST /api/v1/email-notifications/feedback`, `POST /api/v1/email-notifications/feedback/resend` | Signed SNS and Resend feedback. |
 
-Web authentication uses an HTTP session. Native companion/evidence routes use scoped device bearer credentials and ignore web cookies. Mutating requests require the `X-XSRF-TOKEN` header matching the `XSRF-TOKEN` cookie; signed webhook POSTs are exempt from CSRF. Moderation routes require an active account with role `MODERATOR`. Other routes are denied unless explicitly permitted.
+Web authentication uses an HTTP session. Mutations require the `X-XSRF-TOKEN` header matching the `XSRF-TOKEN` cookie; signed webhook POSTs are exempt. Moderation requires an active `MODERATOR`. Native `/companion/*` and `/evidence*` routes use scoped device bearer credentials and ignore web cookies. Capture permissions require a new pairing and explicit approval in web Settings; old devices remain status-only.
+
+The companion opens browser Settings with a short-lived approval handle, separate from its native polling secret. Approval shows the PC/account/permissions and completes without code entry; the native process alone receives the device token. `POST /companion/heartbeat` records server-time presence every ~15 seconds. `/devices/me` exposes own lastSeenAt and connected (45-second TTL), independently of match evidence. Web Play/Settings shows selected-device connectivity and an open-app link; missing signals and failed queries are distinct.
+
+For local capture testing, set `RBGS_CONTROLLED_CAPTURE_ENABLED=true` in `.env` and restart the backend. A moderator creates a test from web Settings with their declared character and an expected opponent. In the companion, select **Enable capture permissions**, approve the displayed pairing code and capture checkbox on the web, then finish pairing. Issue the own assignment code and paste its command into the addon before entering the BG. After finishing, `/reload` persists the capture; the companion sends it automatically or through **Sync saved captures**. A receipt means durable storage, never a verified result. Previous captures cannot be assigned retrospectively.
 
 ## Email providers
 
@@ -79,18 +83,3 @@ Web authentication uses an HTTP session. Native companion/evidence routes use sc
 | `RBGS_SES_FEEDBACK_TOPIC_ARN` | Allowed SNS feedback topic. |
 
 Permanent bounces and complaints suppress future sends. Ambiguous delivery failures enter `REVIEW`; changing providers does not replay them automatically. Templates and localized text live in `src/main/resources/emails`.
-
-
-## Companion devices
-
-Desktop pairing uses a five-minute approval code and a separate native polling secret. Approve the code through an active web session with CSRF; exchange once for an account-bound, revocable 90-day device credential. Secrets and tokens are stored as hashes server-side. Native status uses bearer authorization; cookies cannot substitute it.
-
-The default scope is `companion:status`. Capture permissions require an explicit scoped request and web approval; existing credentials are never upgraded implicitly. Own assignments require `companion:assignments`; evidence writes and receipt recovery require `evidence:write`. The account can list and revoke its own devices through `/api/v1/devices`; native connectivity is checked at `/api/v1/companion/status`.
-
-## Controlled capture tests
-
-Set `RBGS_CONTROLLED_CAPTURE_ENABLED=true` in the local `.env` and restart the API. An active moderator creates a `CONTROLLED_TEST` Darkspear assignment through `/api/v1/moderation/capture-tests`, freezing the declared roster and reporting accounts. Participants list their own assignments and issue a private code once before arming; only its hash is stored server-side. Arm the product addon with that code before the BG.
-
-Native `/api/v1/evidence` accepts bounded schema-2 observations for the tested 70338 adapter. Account/device binding comes from authentication. Evidence and a processing job commit before a durable receipt is returned. Identical account/assignment/capture/revision retries return the same logical receipt; changed content returns 409. `/api/v1/evidence/receipts/{assignmentId}/{captureId}/{revision}` recovers it after response loss. The stored report redacts only the correlator code and preserves observations with submitted/stored SHA-256 digests.
-
-Processing resumes from the durable job queue and moves controlled reports to REVIEW. A receipt means storage, not identity/roster verification, a ranked match or rating. Previous captures cannot be assigned retrospectively.

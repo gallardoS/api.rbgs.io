@@ -18,6 +18,7 @@ public class DeviceEntity {
     @Column(name = "expires_at", nullable = false) private Instant expiresAt;
     @Column(name = "revoked_at") private Instant revokedAt;
     @Column(name = "granted_scope", nullable = false, length = 128) private String grantedScope;
+    @Column(name = "last_seen_at") private Instant lastSeenAt;
 
     DeviceEntity(UUID accountId, String name, String tokenHash, Instant now, String scope) {
         this.id = UUID.randomUUID(); this.accountId = accountId; this.name = name;
@@ -25,6 +26,5 @@ public class DeviceEntity {
         this.grantedScope = scope;
     }
     void revoke(Instant now) { if (revokedAt == null) revokedAt = now; }
-
-
+    void heartbeat(Instant now) { lastSeenAt = now; }
 }

@@ -13,5 +13,8 @@ public interface PairingRepository extends JpaRepository<PairingEntity, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from PairingEntity p where p.pollingHash = :hash")
     Optional<PairingEntity> lockByPolling(@Param("hash") String hash);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from PairingEntity p where p.approvalHash = :hash")
+    Optional<PairingEntity> lockByApproval(@Param("hash") String hash);
     long deleteByExpiresAtBefore(Instant cutoff);
 }

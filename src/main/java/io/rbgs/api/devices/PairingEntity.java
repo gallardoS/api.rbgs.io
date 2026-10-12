@@ -18,6 +18,8 @@ public class PairingEntity {
     @Column(name = "account_id") private UUID accountId;
     @Column(name = "consumed_at") private Instant consumedAt;
     @Column(name = "requested_scope", nullable = false, length = 128) private String requestedScope;
+    @Column(name = "approval_hash", length = 64) private String approvalHash;
+    @Column(name = "device_id") private UUID deviceId;
 
     PairingEntity(String codeHash, String pollingHash, String name, Instant now, String scope) {
         id = UUID.randomUUID(); this.codeHash = codeHash; this.pollingHash = pollingHash;
@@ -26,8 +28,6 @@ public class PairingEntity {
     }
     void approve(UUID accountId) { this.accountId = accountId; }
     void consume(Instant now) { consumedAt = now; }
-
-
-
-
+    void browserApproval(String hash) { approvalHash = hash; }
+    void issuedDevice(UUID id) { deviceId = id; }
 }

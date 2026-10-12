@@ -23,11 +23,18 @@ public class DeviceController {
     public record Start(@NotBlank @Size(max = 80) @Pattern(regexp = "[^\\p{Cntrl}]+") String name, @Size(max=128) String scope) {}
     public record Approval(@NotNull @Pattern(regexp = "[A-HJ-NP-Z2-9]{10}") String code, Boolean acceptCapturePermissions) {}
     public record Poll(@NotNull @Pattern(regexp = "[A-Za-z0-9_-]{43}") String pollingSecret) {}
+    public record BrowserApproval(@NotNull @Pattern(regexp="[A-Za-z0-9_-]{43}") String approvalSecret, Boolean acceptCapturePermissions) {}
 
-
-
-
-
+    @PostMapping("/api/v1/device-pairings/browser/details")
+    public ResponseEntity<DeviceService.BrowserPairing> details(Authentication auth,@Valid @RequestBody BrowserApproval request) {
+        limit("browser-read:"+auth.getName(),120);
+        return response(devices.browserPairing(auth,request.approvalSecret(),false,false));
+    }
+    @PostMapping("/api/v1/device-pairings/browser/approve")
+    public ResponseEntity<DeviceService.BrowserPairing> approveBrowser(Authentication auth,@Valid @RequestBody BrowserApproval request) {
+        limit("approve:"+auth.getName(),10);
+        return response(devices.browserPairing(auth,request.approvalSecret(),true,Boolean.TRUE.equals(request.acceptCapturePermissions())));
+    }
 
     @PostMapping("/api/v1/device-pairings")
     public ResponseEntity<DeviceService.Pairing> start(@Valid @RequestBody Start request, HttpServletRequest servlet) {
@@ -60,8 +67,11 @@ public class DeviceController {
     public ResponseEntity<DeviceService.Status> status(@RequestHeader(value = "Authorization", required = false) String authorization) {
         return response(devices.status(authorization));
     }
-
-
+    @PostMapping("/api/v1/companion/heartbeat")
+    public ResponseEntity<DeviceService.Status> heartbeat(@RequestHeader(value="Authorization",required=false) String authorization) {
+        var reporter=devices.status(authorization);limit("heartbeat:"+reporter.deviceId(),12);
+        return response(devices.heartbeat(authorization));
+    }
     private void limit(String key, int maximum) {
         if (limits.get(key, ignored -> new AtomicInteger()).incrementAndGet() > maximum)
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Retry in one minute");

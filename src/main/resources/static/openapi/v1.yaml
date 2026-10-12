@@ -6,6 +6,47 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /companion/heartbeat:
+    post:
+      operationId: recordCompanionHeartbeat
+      summary: Record a native device connection signal
+      description: Stateless device bearer authorization; web cookies cannot substitute it. Both existing status-only and capture-scoped active devices can send. Uses server receipt time; no client timestamp, game state or ownership claim. Twelve requests per device per minute. Native schedule is approximately 15 seconds. Web connected status expires 45 seconds after the latest signal and is immediately false for revoked/expired devices. Ordinary GET status does not record presence.
+      security: [{ deviceCredential: [] }]
+      responses:
+        '200': { description: 'Authorized deviceId, accountId and current scope; no-store' }
+        '401': { description: 'Missing, invalid, revoked or expired device or inactive account' }
+        '429': { description: 'Retry-After 60 seconds' }
+  /device-pairings/browser/details:
+    post:
+      operationId: previewBrowserPairing
+      summary: Inspect a short-lived native connection request
+      description: Active web session and CSRF required. approvalSecret is separate from the native polling secret and is submitted only in the body. Preview never approves. The URL fragment is removed by the frontend; its temporary handle can survive a login redirect in session storage for at most five minutes. After approval only the approving account can inspect the request. The PAIRED state means credential issuance, not a heartbeat. No device token or native polling secret is returned. 120 reads per signed-in identity per minute.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrowserPairingApproval' }
+      responses:
+        '200':
+          description: 'Name, signed-in accountName, scope, expiresAt, PENDING/APPROVED/PAIRED and nullable deviceId; no-store'
+        '403': { description: 'Web account and CSRF required; device bearer is insufficient' }
+        '410': { description: 'Unknown, expired or approved for another account' }
+  /device-pairings/browser/approve:
+    post:
+      operationId: approveBrowserPairing
+      summary: Explicitly approve the displayed PC and permissions without typing a code
+      description: Same short-lived handle and web/CSRF requirements as preview. Single approval only; does not extend expiry. Scope is frozen at creation. Capture-scoped requests require acceptCapturePermissions=true; the approval button explicitly describes those permissions. The native process alone exchanges its distinct polling secret and stores the issued credential in Windows. Ten approvals per signed-in identity per minute.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrowserPairingApproval' }
+      responses:
+        '200': { description: 'Approved request without device credential; no-store' }
+        '403': { description: 'Web session, CSRF or explicit capture consent missing' }
+        '410': { description: 'Unknown, expired or already approved request' }
   /moderation/capture-tests:
     post:
       operationId: createControlledCaptureTest
@@ -162,12 +203,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [code, pollingSecret, expiresAt, intervalSeconds]
+                required: [code, pollingSecret, expiresAt, intervalSeconds, approvalSecret]
                 properties:
                   code: { type: string, pattern: '^[A-HJ-NP-Z2-9]{10}$' }
                   pollingSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
                   expiresAt: { type: string, format: date-time }
                   intervalSeconds: { type: integer, const: 5 }
+                  approvalSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$', description: 'Short-lived browser approval handle; cannot exchange a device credential' }
         '400': { description: "Invalid device name" }
         '429': { description: "Rate limited; Retry-After is 60 seconds" }
   /device-pairings/approve:
@@ -288,9 +330,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlaySelectionContext' }
-        '401': { description: No Battle.net session }
-        '403': { description: Missing or inactive account }
-        '503': { description: Configured season does not exist }
+        '401': { description: "No Battle.net session" }
+        '403': { description: "Missing or inactive account" }
+        '503': { description: "Configured season does not exist" }
   /me/selection:
     put:
       operationId: saveSeasonSelection
@@ -307,11 +349,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SeasonSelection' }
-        '400': { description: Invalid declaration, role, mode or character reference }
-        '401': { description: No Battle.net session }
-        '403': { description: Missing or inactive account or invalid CSRF token }
-        '409': { description: No configured season or stale selection or season version; fetch context before retrying }
-        '503': { description: Configured season missing or authenticated Forever verification unavailable }
+        '400': { description: "Invalid declaration, role, mode or character reference" }
+        '401': { description: "No Battle.net session" }
+        '403': { description: "Missing or inactive account or invalid CSRF token" }
+        '409': { description: "No configured season or stale selection or season version; fetch context before retrying" }
+        '503': { description: "Configured season missing or authenticated Forever verification unavailable" }
   /email-notifications/feedback/resend:
     post:
       operationId: receiveResendFeedback
@@ -357,16 +399,16 @@ paths:
         required: true
         content:
           text/plain:
-            schema: { type: string, description: Signed SNS JSON envelope }
+            schema: { type: string, description: "Signed SNS JSON envelope" }
           application/json:
             schema: { type: object, additionalProperties: true }
       responses:
-        '204': { description: Subscription confirmed or feedback durably processed }
-        '400': { description: Invalid SNS or SES payload }
-        '403': { description: Untrusted topic, certificate URL or signature }
-        '409': { description: Feedback subscription was removed }
-        '413': { description: Payload too large }
-        '503': { description: Feedback not configured or temporary AWS connection failure }
+        '204': { description: "Subscription confirmed or feedback durably processed" }
+        '400': { description: "Invalid SNS or SES payload" }
+        '403': { description: "Untrusted topic, certificate URL or signature" }
+        '409': { description: "Feedback subscription was removed" }
+        '413': { description: "Payload too large" }
+        '503': { description: "Feedback not configured or temporary AWS connection failure" }
   /season-notifications:
     get:
       operationId: getSeasonNotificationStatus
@@ -399,12 +441,12 @@ paths:
                 language: { type: string, enum: [en, es, fr] }
                 website: { type: string, maxLength: 200, default: '' }
       responses:
-        '202': { description: Request accepted; confirmation may be queued if required }
-        '400': { description: Invalid email or locale }
-        '403': { description: Missing or invalid CSRF token }
-        '409': { description: Season already started }
-        '429': { description: Too many requests }
-        '503': { description: Email delivery has not been configured }
+        '202': { description: "Request accepted; confirmation may be queued if required" }
+        '400': { description: "Invalid email or locale" }
+        '403': { description: "Missing or invalid CSRF token" }
+        '409': { description: "Season already started" }
+        '429': { description: "Too many requests" }
+        '503': { description: "Email delivery has not been configured" }
   /season-notifications/confirm:
     post:
       operationId: confirmSeasonNotification
@@ -416,10 +458,10 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/SeasonNotificationLink' }
       responses:
-        '204': { description: Email confirmed }
-        '400': { description: Invalid, expired or cancelled confirmation }
-        '403': { description: Missing or invalid CSRF token }
-        '429': { description: Too many requests }
+        '204': { description: "Email confirmed" }
+        '400': { description: "Invalid, expired or cancelled confirmation" }
+        '403': { description: "Missing or invalid CSRF token" }
+        '429': { description: "Too many requests" }
   /season-notifications/unsubscribe:
     post:
       operationId: cancelSeasonNotification
@@ -431,10 +473,10 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/SeasonNotificationLink' }
       responses:
-        '204': { description: Notification cancelled }
-        '400': { description: Invalid token }
-        '403': { description: Missing or invalid CSRF token }
-        '429': { description: Too many requests }
+        '204': { description: "Notification cancelled" }
+        '400': { description: "Invalid token" }
+        '403': { description: "Missing or invalid CSRF token" }
+        '429': { description: "Too many requests" }
   /moderation/season-notifications:
     get:
       operationId: getSeasonNotificationConfiguration
@@ -450,8 +492,8 @@ paths:
                 properties:
                   configured: { type: boolean }
                   seasonLive: { type: boolean }
-        '401': { description: Missing authenticated session }
-        '403': { description: Active account and current persisted moderator role required }
+        '401': { description: "Missing authenticated session" }
+        '403': { description: "Active account and current persisted moderator role required" }
   /moderation/season-notifications/launch:
     post:
       operationId: queueSeasonLaunchNotifications
@@ -467,10 +509,10 @@ paths:
                 required: [queued]
                 properties:
                   queued: { type: integer, minimum: 0 }
-        '401': { description: Missing authenticated session }
-        '403': { description: Active account, current persisted moderator role or valid CSRF token required }
-        '409': { description: Season-live flag is disabled }
-        '503': { description: Email delivery has not been configured }
+        '401': { description: "Missing authenticated session" }
+        '403': { description: "Active account, current persisted moderator role or valid CSRF token required" }
+        '409': { description: "Season-live flag is disabled" }
+        '503': { description: "Email delivery has not been configured" }
   /characters/me:
     get:
       operationId: getCurrentUserCharacters
@@ -586,6 +628,12 @@ components:
       scheme: bearer
       description: Opaque account-bound rbgs.io device token, not a Battle.net token.
   schemas:
+    BrowserPairingApproval:
+      type: object
+      required: [approvalSecret]
+      properties:
+        approvalSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+        acceptCapturePermissions: { type: boolean, default: false }
     CaptureIdentity:
       type: object
       additionalProperties: false
@@ -610,13 +658,15 @@ components:
         contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     Device:
       type: object
-      required: [id, name, createdAt, expiresAt, revokedAt, scope]
+      required: [id, name, createdAt, expiresAt, revokedAt, scope, lastSeenAt, connected]
       properties:
         id: { type: string, format: uuid }
         name: { type: string, maxLength: 80 }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         revokedAt: { type: [string, 'null'], format: date-time }
+        lastSeenAt: { type: [string, 'null'], format: date-time, description: 'Latest authenticated native heartbeat at server time' }
+        connected: { type: boolean, description: 'Recent signal from this device; not game participation or physical browser co-location' }
         scope: { type: string, enum: ['companion:status', 'companion:status companion:assignments evidence:write'] }
     PlaySelectionContext:
       type: object
@@ -647,30 +697,30 @@ components:
       properties:
         seasonId: { type: string, format: uuid }
         seasonVersion: { type: integer, format: int64, minimum: 0 }
-        expectedVersion: { type: [integer, 'null'], format: int64, minimum: 0, description: Null for first creation; saved version for replacement }
+        expectedVersion: { type: [integer, 'null'], format: int64, minimum: 0, description: "Null for first creation; saved version for replacement" }
         characterId: { type: [string, 'null'], format: uuid }
         declaration:
           type: [object, 'null']
           required: [name, realm]
           properties:
-            name: { type: string, minLength: 1, maxLength: 100, description: Nonblank text without control characters }
-            realm: { type: string, minLength: 1, maxLength: 100, description: Provisional declaration uses the selected Classic character realm; not verified Forever ownership }
+            name: { type: string, minLength: 1, maxLength: 100, description: "Nonblank text without control characters" }
+            realm: { type: string, minLength: 1, maxLength: 100, description: "Provisional declaration uses the selected Classic character realm; not verified Forever ownership" }
         role: { type: string, enum: [FC, HEALER, DPS] }
         captainConsent: { type: boolean }
     SeasonSelection:
       type: object
       required: [characterId, name, realm, source, ratingSubjectType, ratingSubjectId, role, captainConsent, version, validForSeason]
       properties:
-        characterId: { type: string, format: uuid, description: Internal identity; not a Blizzard ID or a game GUID }
+        characterId: { type: string, format: uuid, description: "Internal identity; not a Blizzard ID or a game GUID" }
         name: { type: string }
         realm: { type: string }
         source: { type: string, enum: [DECLARED, BLIZZARD_VERIFIED] }
         ratingSubjectType: { type: string, enum: [ACCOUNT, CHARACTER] }
-        ratingSubjectId: { type: string, format: uuid, description: Prospective account or character subject; no rating record is created }
+        ratingSubjectId: { type: string, format: uuid, description: "Prospective account or character subject; no rating record is created" }
         role: { type: string, enum: [FC, HEALER, DPS] }
         captainConsent: { type: boolean }
         version: { type: integer, format: int64, minimum: 0 }
-        validForSeason: { type: boolean, description: Stored mode/provenance match the current season; not proof of fresh ownership, setup readiness or queue eligibility }
+        validForSeason: { type: boolean, description: "Stored mode/provenance match the current season; not proof of fresh ownership, setup readiness or queue eligibility" }
     SeasonNotificationLink:
       type: object
       required: [token]

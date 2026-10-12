@@ -86,12 +86,43 @@ class DevicePairingTests {
         assertTrue(service.list(auth()).isEmpty());
     }
 
-
-
-
-
-
-
+    @Test void browserApprovalIsSeparateSingleUseAndNeverExposesTheCredential() throws Exception {
+        var p=start();assertEquals(43,p.approvalSecret().length());
+        assertEquals(DeviceService.hash(p.approvalSecret()),db.queryForObject("SELECT approval_hash FROM rbgs.device_pairings WHERE polling_hash=?",String.class,DeviceService.hash(p.pollingSecret())));
+        assertEquals("PENDING",service.browserPairing(auth(),p.approvalSecret(),false,false).status());
+        assertEquals("PENDING",service.exchange(p.pollingSecret()).status());
+        assertEquals(410,assertThrows(ResponseStatusException.class,()->service.exchange(p.approvalSecret())).getStatusCode().value());
+        mvc.perform(post("/api/v1/device-pairings/browser/approve").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).contentType("application/json").content("{\"approvalSecret\":\""+p.approvalSecret()+"\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/device-pairings/browser/approve").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()).contentType("application/json").content("{\"approvalSecret\":\""+p.approvalSecret()+"\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.accountName").value("DeviceFixture")).andExpect(jsonPath("$.token").doesNotExist()).andExpect(header().string("Cache-Control","no-store"));
+        assertThrows(ResponseStatusException.class,()->service.browserPairing(auth(),p.approvalSecret(),true,false));
+        var token=service.exchange(p.pollingSecret());var view=service.browserPairing(auth(),p.approvalSecret(),false,false);
+        assertEquals("PAIRED",view.status());assertEquals(token.deviceId(),view.deviceId());
+        assertFalse(service.list(auth()).getFirst().connected());
+    }
+    @Test void browserApprovalCannotBypassConsentExpiryOrAccountBinding() {
+        var p=service.start("Capture fixture",DeviceService.CAPTURE_SCOPE);pairingIds.add(db.queryForObject("SELECT id FROM rbgs.device_pairings WHERE polling_hash=?",UUID.class,DeviceService.hash(p.pollingSecret())));
+        assertEquals(403,assertThrows(ResponseStatusException.class,()->service.browserPairing(auth(),p.approvalSecret(),true,false)).getStatusCode().value());
+        service.browserPairing(auth(),p.approvalSecret(),true,true);
+        String ownSubject=subject;subject=UUID.randomUUID().toString();var other=accounts.upsert(ISSUER,subject,"OtherFixture");
+        try{assertEquals(410,assertThrows(ResponseStatusException.class,()->service.browserPairing(auth(),p.approvalSecret(),false,false)).getStatusCode().value());}finally{subject=ownSubject;db.update("DELETE FROM rbgs.accounts WHERE id=?",other.id());}
+        db.update("UPDATE rbgs.device_pairings SET expires_at=? WHERE polling_hash=?",java.sql.Timestamp.from(Instant.now().minusSeconds(1)),DeviceService.hash(p.pollingSecret()));
+        assertThrows(ResponseStatusException.class,()->service.browserPairing(auth(),p.approvalSecret(),false,false));
+    }
+    @Test void heartbeatIsAuthenticatedServerTimedAndExpiresWithoutClaimingTheAppClosed() throws Exception {
+        var token=paired();String bearer="Bearer "+token.token();
+        service.status(bearer);assertNull(service.list(auth()).getFirst().lastSeenAt());
+        mvc.perform(post("/api/v1/companion/heartbeat").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/companion/heartbeat").header("Authorization",bearer)).andExpect(status().isOk()).andExpect(jsonPath("$.accountId").value(account.id().toString()));
+        assertTrue(service.list(auth()).getFirst().connected());
+        db.update("UPDATE rbgs.devices SET last_seen_at=? WHERE id=?",java.sql.Timestamp.from(Instant.now().minusSeconds(46)),token.deviceId());assertFalse(service.list(auth()).getFirst().connected());
+        db.update("UPDATE rbgs.devices SET last_seen_at=? WHERE id=?",java.sql.Timestamp.from(Instant.now().plusSeconds(60)),token.deviceId());assertFalse(service.list(auth()).getFirst().connected());
+        service.heartbeat(bearer);service.revoke(auth(),token.deviceId());assertFalse(service.list(auth()).getFirst().connected());
+        mvc.perform(post("/api/v1/companion/heartbeat").header("Authorization",bearer)).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/device-pairings/browser/details").header("Authorization",bearer).contentType("application/json").content("{\"approvalSecret\":\""+"a".repeat(43)+"\"}")).andExpect(status().isForbidden());
+    }
 
     @Test void deviceRejectsRevocationExpiryAndAccountSuspensionImmediately() {
         var token = paired();
