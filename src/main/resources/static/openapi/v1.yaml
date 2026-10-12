@@ -6,6 +6,144 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /device-pairings:
+    post:
+      operationId: startDevicePairing
+      summary: Create a five-minute desktop pairing request
+      description: Stateless; ignores web cookies. Returns a visible approval code and separate secret polling credential. No-store. Limited to five creations per peer IP per minute on this single API instance. Secrets must not be logged or placed in URLs.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80, pattern: '^[^\u0000-\u001F\u007F]+$' }
+                scope: { type: string, enum: ['companion:status', 'companion:status companion:assignments evidence:write'], default: 'companion:status' }
+      responses:
+        '200':
+          description: Pending pairing; neither value authenticates a device yet
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, pollingSecret, expiresAt, intervalSeconds]
+                properties:
+                  code: { type: string, pattern: '^[A-HJ-NP-Z2-9]{10}$' }
+                  pollingSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+                  expiresAt: { type: string, format: date-time }
+                  intervalSeconds: { type: integer, const: 5 }
+        '400': { description: "Invalid device name" }
+        '429': { description: "Rate limited; Retry-After is 60 seconds" }
+  /device-pairings/approve:
+    post:
+      operationId: approveDevicePairing
+      summary: Approve a code for the current active Battle.net account
+      description: Requires web session and X-XSRF-TOKEN. Approve only a code from your own companion. Approval is single-use and does not extend expiry. Limited to ten attempts per signed-in identity per minute. Approval never returns polling secrets or device tokens.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^[A-HJ-NP-Z2-9]{10}$' }
+                acceptCapturePermissions: { type: boolean, default: false, description: "Must be true when approving a capture-scoped request" }
+      responses:
+        '204': { description: "Approved; companion must exchange its polling secret" }
+        '400': { description: "Invalid code format" }
+        '401': { description: "No web session" }
+        '403': { description: "Inactive account or invalid CSRF" }
+        '410': { description: "Unknown, expired, approved or consumed code" }
+        '429': { description: "Rate limited; Retry-After is 60 seconds" }
+  /device-pairings/token:
+    post:
+      operationId: exchangeDevicePairing
+      summary: Poll approval and exchange once for a device credential
+      description: Stateless and no-store. Poll at most once every five seconds. Approved requests are locked transactionally; concurrent exchanges yield one device. Five active devices per account. PAIRED issues a 90-day opaque credential with the approved requested scope; existing credentials remain status-only. A lost successful response requires a new pairing. Device credentials cannot authenticate web commands.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pollingSecret]
+              properties:
+                pollingSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+      responses:
+        '200':
+          description: Pending approval or a single issued credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, token, deviceId, expiresAt, scope]
+                properties:
+                  status: { type: string, enum: [PENDING, PAIRED] }
+                  token: { type: [string, 'null'], pattern: '^[A-Za-z0-9_-]{43}$' }
+                  deviceId: { type: [string, 'null'], format: uuid }
+                  expiresAt: { type: [string, 'null'], format: date-time }
+                  scope: { type: [string, 'null'], enum: [null, 'companion:status', 'companion:status companion:assignments evidence:write'] }
+        '400': { description: "Invalid polling credential format" }
+        '409': { description: "Active device limit reached; revoke a device" }
+        '410': { description: "Unknown, expired, consumed pairing or inactive account" }
+        '429': { description: "Rate limited; Retry-After is 60 seconds" }
+  /devices/me:
+    get:
+      operationId: listMyDevices
+      summary: List this account's devices without credentials
+      description: Requires current active web account. Establishes CSRF cookie; no-store. Paired does not mean currently connected or in-game. Revoked and expired devices remain visible.
+      security: [{ webSession: [] }]
+      responses:
+        '200':
+          description: Own devices, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Device' }
+        '401': { description: "No web session" }
+        '403': { description: "Inactive account" }
+  /devices/{id}:
+    delete:
+      operationId: revokeMyDevice
+      summary: Revoke an owned device immediately
+      description: Requires current active web account and X-XSRF-TOKEN. Repeating revocation succeeds. No-store.
+      security: [{ webSession: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: "Revoked" }
+        '401': { description: "No web session" }
+        '403': { description: "Inactive account or invalid CSRF" }
+        '404': { description: "Device missing or owned by another account" }
+  /companion/status:
+    get:
+      operationId: getCompanionConnection
+      summary: Verify scoped device connectivity authorization
+      description: Stateless bearer authentication; web cookies cannot substitute a credential. Reads current device expiry/revocation and persisted account status on every request. No-store. Does not establish addon freshness, game participation, readiness or match eligibility.
+      security: [{ deviceCredential: [] }]
+      responses:
+        '200':
+          description: Authorized account-bound device
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceId, accountId, scope]
+                properties:
+                  deviceId: { type: string, format: uuid }
+                  accountId: { type: string, format: uuid }
+                  scope: { type: string, enum: ['companion:status', 'companion:status companion:assignments evidence:write'] }
+        '401': { description: "Missing, invalid, expired or revoked device credential or inactive account" }
   /play/context:
     get:
       operationId: getPlaySelectionContext
@@ -304,7 +442,27 @@ paths:
                 properties:
                   status: { type: string, const: unavailable }
 components:
+  securitySchemes:
+    webSession:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: Battle.net web session; mutations also require X-XSRF-TOKEN.
+    deviceCredential:
+      type: http
+      scheme: bearer
+      description: Opaque account-bound rbgs.io device token, not a Battle.net token.
   schemas:
+    Device:
+      type: object
+      required: [id, name, createdAt, expiresAt, revokedAt, scope]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 80 }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time }
+        scope: { type: string, enum: ['companion:status', 'companion:status companion:assignments evidence:write'] }
     PlaySelectionContext:
       type: object
       required: [season, selection, ownershipVerification, matchmakingAvailable]

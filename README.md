@@ -78,3 +78,10 @@ Authentication uses an HTTP session, not bearer tokens. Mutating requests requir
 | `RBGS_SES_FEEDBACK_TOPIC_ARN` | Allowed SNS feedback topic. |
 
 Permanent bounces and complaints suppress future sends. Ambiguous delivery failures enter `REVIEW`; changing providers does not replay them automatically. Templates and localized text live in `src/main/resources/emails`.
+
+
+## Companion devices
+
+Desktop pairing uses a five-minute approval code and a separate native polling secret. Approve the code through an active web session with CSRF; exchange once for an account-bound, revocable 90-day device credential. Secrets and tokens are stored as hashes server-side. Native status uses bearer authorization; cookies cannot substitute it.
+
+The default scope is `companion:status`. Capture permissions require an explicit scoped request and web approval; existing credentials are never upgraded implicitly. Assignment and evidence endpoints are delivered separately. The account can list and revoke its own devices through `/api/v1/devices`; native connectivity is checked at `/api/v1/companion/status`.
