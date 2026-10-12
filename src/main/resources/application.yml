@@ -39,6 +39,8 @@ spring:
             issuer-uri: https://oauth.battle.net
 
 rbgs:
+  capture:
+    controlled-enabled: ${RBGS_CONTROLLED_CAPTURE_ENABLED:false}
   notifications:
     provider: ${RBGS_EMAIL_PROVIDER:ses}
     resend-api-key: ${RBGS_RESEND_API_KEY:}

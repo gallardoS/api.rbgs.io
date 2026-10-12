@@ -6,6 +6,139 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /moderation/capture-tests:
+    post:
+      operationId: createControlledCaptureTest
+      summary: Freeze a moderator-declared Darkspear test roster
+      description: Requires an active persisted MODERATOR web account, CSRF, and RBGS_CONTROLLED_CAPTURE_ENABLED. Declared identities are unverified. No ranked match or rating is created. At least one active account reporter and both assigned teams are required. Ten requests per moderator per minute.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [armMinutes, roster]
+              properties:
+                armMinutes: { type: integer, minimum: 5, maximum: 120 }
+                roster:
+                  type: array
+                  minItems: 2
+                  maxItems: 40
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [accountId, character, teamKey]
+                    properties:
+                      accountId: { type: [string, 'null'], format: uuid }
+                      character: { $ref: '#/components/schemas/CaptureIdentity' }
+                      teamKey: { type: string, enum: [A, B] }
+      responses:
+        '200': { description: "Test match ID, CONTROLLED_TEST mode, armUntil and per-account assignmentId/captureId; no plaintext code" }
+        '401': { description: "Web login required" }
+        '403': { description: "Active moderator and CSRF required" }
+        '422': { description: "Invalid or unsupported roster" }
+        '429': { description: "Retry-After 60 seconds" }
+        '503': { description: "Controlled capture testing disabled" }
+  /moderation/capture-tests/{id}/cancel:
+    post:
+      operationId: cancelControlledCaptureTest
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: "Cancelled; committed evidence retained" }
+        '403': { description: "Active moderator and CSRF required" }
+        '404': { description: "Test not found" }
+        '503': { description: "Controlled testing disabled" }
+  /companion/assignments:
+    get:
+      operationId: listOwnCaptureAssignments
+      description: Native bearer with companion:assignments; web cookies are ignored. At most 50 own assignments, newest first, with character, armUntil, codeIssued and cancelled. No codes or other accounts. No-store; 120 reads per account per minute.
+      security: [{ deviceCredential: [] }]
+      responses:
+        '200': { description: "Own controlled assignment summaries" }
+        '401': { description: "Missing, expired or revoked device" }
+        '403': { description: "Re-pair with explicit capture permissions" }
+        '503': { description: "Controlled testing disabled" }
+  /companion/assignments/{captureId}:
+    get:
+      operationId: getOwnCaptureAssignment
+      description: Requires companion:assignments. Frozen schema-2 descriptor contains match/assignment/capture UUIDs, assignedCharacterId, assignedTeamKey A/B, rosterVersion 1, mode CONTROLLED_TEST, expectedMapProfile DARKSPEAR_DIAGNOSTIC, expectedRoster, issuedAt, armUntil and assignmentCodeSha256. Never returns the plaintext code. Readable after expiry/cancellation for evidence recovery.
+      security: [{ deviceCredential: [] }]
+      parameters:
+        - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: "Frozen own assignment descriptor; no-store" }
+        '404': { description: "No own assignment" }
+        '409': { description: "Code not issued" }
+  /companion/assignments/{captureId}/issue:
+    post:
+      operationId: issueOwnCaptureCode
+      description: Requires companion:assignments. Once only, before armUntil, while not cancelled. Returns assignment descriptor and assignmentCode (16 uppercase Crockford characters). Server persists only its SHA-256. A lost issuance requires a fresh assignment unless the addon or this PC already has the code. Ten requests per account per minute; no-store.
+      security: [{ deviceCredential: [] }]
+      parameters:
+        - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: "Own plaintext code issued once" }
+        '404': { description: "No own assignment" }
+        '409': { description: "Code already issued" }
+        '410': { description: "Cancelled or arming window expired" }
+  /evidence:
+    post:
+      operationId: storeCaptureEvidence
+      description: Native bearer evidence:write only; no web cookie authorization. Strict schema 2, at most 256 KiB, 40 score rows, depth 30, duplicate JSON keys rejected. Root requires schemaVersion, matchId, assignmentId, captureId, captureRevision, assignmentCode, client, observedCharacter, capture. Only wow_classic_beta 1.60.1/70338/interface16001 and darkspear-70338-test-1 are accepted. Nullable Lua members must become explicit JSON null. Canonical UTF-8 uses sorted object keys, ordered arrays and nonnegative safe integers. Identity/stats remain observations. Idempotency key is account/assignment/capture/revision; different canonical content returns 409. Evidence and processing job commit before receipt. Stored report replaces plaintext assignmentCode with assignmentCodeSha256, preserving other members; submitted/stored hashes are separate. Every controlled report enters REVIEW, never VERIFIED or rating. Late/cancelled reports are retained for review. Sixty writes per account per minute.
+      security: [{ deviceCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schemaVersion, matchId, assignmentId, captureId, captureRevision, assignmentCode, client, observedCharacter, capture]
+              additionalProperties: false
+              properties:
+                schemaVersion: { type: integer, const: 2 }
+                matchId: { type: string, format: uuid }
+                assignmentId: { type: string, format: uuid }
+                captureId: { type: string, format: uuid }
+                captureRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                assignmentCode: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{16}$' }
+                client: { type: object, description: "Exact addonVersion, adapterVersion, product, gameVersion, gameBuild, interface and companionVersion members" }
+                observedCharacter: { $ref: '#/components/schemas/CaptureIdentity' }
+                capture: { type: object, description: "Exact state, stage, continuity, incompleteReason, map, startedAt, endedAt, roster and outcome members; COMPLETE requires continuous final data on map 2997" }
+      responses:
+        '200':
+          description: Durable receipt; storage does not imply match verification
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaptureReceipt' }
+        '401': { description: "Missing, expired or revoked device" }
+        '403': { description: "Missing scope or incorrect own assignment/code binding" }
+        '404': { description: "No own assignment" }
+        '409': { description: "Different content under existing revision" }
+        '413': { description: "Body exceeds 256 KiB" }
+        '415': { description: "JSON required" }
+        '422': { description: "Invalid or unsupported capture" }
+        '429': { description: "Retry-After 60 seconds" }
+        '503': { description: "Controlled testing disabled" }
+  /evidence/receipts/{assignmentId}/{captureId}/{revision}:
+    get:
+      operationId: recoverOwnCaptureReceipt
+      description: Requires evidence:write. Own account-bound receipt recovery after response loss or restart; no-store. Verify IDs, revision, durablyStored and contentSha256 before marking local ACKNOWLEDGED. Processing status may advance from PENDING to REVIEW.
+      security: [{ deviceCredential: [] }]
+      parameters:
+        - { in: path, name: assignmentId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: revision, required: true, schema: { type: integer, minimum: 1, maximum: 2147483647 } }
+      responses:
+        '200':
+          description: Previously committed receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaptureReceipt' }
+        '404': { description: "No own stored receipt" }
   /device-pairings:
     post:
       operationId: startDevicePairing
@@ -453,6 +586,28 @@ components:
       scheme: bearer
       description: Opaque account-bound rbgs.io device token, not a Battle.net token.
   schemas:
+    CaptureIdentity:
+      type: object
+      additionalProperties: false
+      required: [name, realm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        realm: { type: [string, 'null'], minLength: 1, maxLength: 128 }
+        guid: { type: [string, 'null'], minLength: 1, maxLength: 128 }
+    CaptureReceipt:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, evidenceId, assignmentId, captureId, captureRevision, receivedAt, durablyStored, processingStatus, contentSha256]
+      properties:
+        schemaVersion: { type: integer, const: 2 }
+        evidenceId: { type: string, format: uuid }
+        assignmentId: { type: string, format: uuid }
+        captureId: { type: string, format: uuid }
+        captureRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        receivedAt: { type: string, format: date-time }
+        durablyStored: { type: boolean, const: true }
+        processingStatus: { type: string, enum: [PENDING, REVIEW] }
+        contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     Device:
       type: object
       required: [id, name, createdAt, expiresAt, revokedAt, scope]
