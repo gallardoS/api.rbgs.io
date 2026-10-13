@@ -37,6 +37,40 @@ class CaptureTests {
   byte[] bytes=getClass().getResourceAsStream("/capture/evidence-wire.sanitized.json").readAllBytes();var request=json.parse(bytes);json.evidence(request);assertArrayEquals(bytes,json.canonical(request));
  }
  UUID create(){var match=service.create(auth(),request());UUID id=(UUID)match.get("matchId");matches.add(id);return (UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");}
+ Map<String,Object> captureOnlyRequest(){var result=new LinkedHashMap<String,Object>(request());var own=new LinkedHashMap<>(CaptureJson.object(((List<?>)result.get("roster")).getFirst()));
+  own.put("teamKey",null);result.put("roster",List.of(own));result.put("testKind","CAPTURE_ONLY");return result;}
+ @Test void random_bg_capture_uses_one_own_reporter_no_declared_team_and_durable_review_only_receipts()throws Exception {
+  var response=mvc.perform(post("/api/v1/moderation/capture-tests").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()).contentType("application/json").content(json.encode(captureOnlyRequest())))
+   .andExpect(status().isOk()).andExpect(jsonPath("$.testKind").value("CAPTURE_ONLY")).andReturn();
+  var created=json.parse(response.getResponse().getContentAsByteArray());UUID match=CaptureJson.uuid(created.get("matchId"));matches.add(match);
+  UUID capture=CaptureJson.uuid(CaptureJson.object(((List<?>)created.get("assignments")).getFirst()).get("captureId"));
+  assertEquals("CAPTURE_ONLY",db.queryForObject("SELECT test_kind FROM rbgs.capture_test_matches WHERE id=?",String.class,match));
+  assertNull(db.queryForObject("SELECT assigned_team FROM rbgs.capture_assignments WHERE capture_id=?",String.class,capture));
+  assertEquals("CAPTURE_ONLY",service.list(owner.id()).getFirst().get("testKind"));assertTrue(service.list(UUID.randomUUID()).isEmpty());
+  var issued=service.issue(owner.id(),capture,true);var descriptor=CaptureJson.object(issued.get("assignment"));assertEquals("CAPTURE_ONLY",descriptor.get("testKind"));assertNull(descriptor.get("assignedTeamKey"));
+  var frozen=(List<?>)descriptor.get("expectedRoster");assertEquals(1,frozen.size());assertNull(CaptureJson.object(frozen.getFirst()).get("assignedTeamKey"));
+  var reporter=devices.authorize("Bearer "+token(true).token(),"evidence:write");var payload=payload(capture,issued);var receipt=service.ingest(reporter,payload);
+  assertTrue(receipt.durablyStored());assertEquals(receipt.evidenceId(),service.ingest(reporter,payload).evidenceId());service.processPending();
+  assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,158).processingStatus());
+  assertEquals("CAPTURE_ONLY_NO_EXPECTED_TEAMS",db.queryForObject("SELECT review_reason FROM rbgs.capture_evidence WHERE id=?",String.class,receipt.evidenceId()));
+ }
+ @Test void capture_only_rejects_other_accounts_declared_teams_extra_participants_and_unknown_kinds(){
+  var request=captureOnlyRequest();var own=CaptureJson.object(((List<?>)request.get("roster")).getFirst());
+  own.put("accountId",UUID.randomUUID().toString());assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
+  own.put("accountId",owner.id().toString());own.put("teamKey","A");assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
+  own.put("teamKey",null);request.put("roster",List.of(own,own));assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
+  request.put("roster",List.of(own));request.put("testKind","UNKNOWN");assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
+  request.remove("testKind");assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
+  assertEquals(0,db.queryForObject("SELECT COUNT(*) FROM rbgs.capture_test_matches WHERE created_by=?",Integer.class,owner.id()));
+ }
+ @Test void old_companion_cannot_consume_a_capture_only_code_before_upgrading()throws Exception {
+  var match=service.create(auth(),captureOnlyRequest());matches.add((UUID)match.get("matchId"));UUID capture=(UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");
+  var token=token(true);String endpoint="/api/v1/companion/assignments/"+capture+"/issue";
+  mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token())).andExpect(status().isConflict());
+  assertNull(db.queryForObject("SELECT code_hash FROM rbgs.capture_assignments WHERE capture_id=?",String.class,capture));
+  mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token()).header("X-RBGS-Capture-Test-Kinds","CAPTURE_ONLY"))
+   .andExpect(status().isOk()).andExpect(jsonPath("$.assignment.testKind").value("CAPTURE_ONLY"));
+ }
  DeviceService.Token token(boolean capture){var p=devices.start("Capture fixture",capture?DeviceService.CAPTURE_SCOPE:DeviceService.SCOPE);devices.approve(auth(),p.code(),capture);return devices.exchange(p.pollingSecret());}
  Map<String,Object> payload(UUID capture,Map<String,Object> issued)throws Exception {
   byte[] fixture=getClass().getResourceAsStream("/capture/product-final.sanitized.json").readAllBytes();var root=json.parse(fixture);var result=new LinkedHashMap<>(CaptureJson.object(((List<?>)root.get("captures")).getFirst()));

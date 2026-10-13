@@ -50,8 +50,8 @@ paths:
   /moderation/capture-tests:
     post:
       operationId: createControlledCaptureTest
-      summary: Freeze a moderator-declared Darkspear test roster
-      description: Requires an active persisted MODERATOR web account, CSRF, and RBGS_CONTROLLED_CAPTURE_ENABLED. Declared identities are unverified. No ranked match or rating is created. At least one active account reporter and both assigned teams are required. Ten requests per moderator per minute.
+      summary: Create an individual capture or a controlled Darkspear roster test
+      description: Requires an active persisted MODERATOR web account, CSRF, and RBGS_CONTROLLED_CAPTURE_ENABLED. Declared identities are unverified. No ranked match or rating is created. CAPTURE_ONLY permits exactly the authenticated moderator account and its declared character with teamKey null; no expected opponent/team is asserted. ROSTER_CONTROLLED (the default) requires at least one active reporter and both assigned teams. All reports remain REVIEW-only. Ten requests per moderator per minute.
       security: [{ webSession: [] }]
       requestBody:
         required: true
@@ -63,9 +63,10 @@ paths:
               required: [armMinutes, roster]
               properties:
                 armMinutes: { type: integer, minimum: 5, maximum: 120 }
+                testKind: { type: string, enum: [ROSTER_CONTROLLED, CAPTURE_ONLY], default: ROSTER_CONTROLLED }
                 roster:
                   type: array
-                  minItems: 2
+                  minItems: 1
                   maxItems: 40
                   items:
                     type: object
@@ -74,9 +75,30 @@ paths:
                     properties:
                       accountId: { type: [string, 'null'], format: uuid }
                       character: { $ref: '#/components/schemas/CaptureIdentity' }
-                      teamKey: { type: string, enum: [A, B] }
+                      teamKey: { type: [string, 'null'], enum: [A, B, null] }
+              allOf:
+                - if:
+                    required: [testKind]
+                    properties:
+                      testKind: { const: CAPTURE_ONLY }
+                  then:
+                    properties:
+                      roster:
+                        minItems: 1
+                        maxItems: 1
+                        items:
+                          properties:
+                            accountId: { type: string, format: uuid }
+                            teamKey: { type: 'null' }
+                  else:
+                    properties:
+                      roster:
+                        minItems: 2
+                        items:
+                          properties:
+                            teamKey: { type: string, enum: [A, B] }
       responses:
-        '200': { description: "Test match ID, CONTROLLED_TEST mode, armUntil and per-account assignmentId/captureId; no plaintext code" }
+        '200': { description: "Test match ID, CONTROLLED_TEST mode, testKind, armUntil and per-account assignmentId/captureId; no plaintext code" }
         '401': { description: "Web login required" }
         '403': { description: "Active moderator and CSRF required" }
         '422': { description: "Invalid or unsupported roster" }
@@ -96,7 +118,7 @@ paths:
   /companion/assignments:
     get:
       operationId: listOwnCaptureAssignments
-      description: Native bearer with companion:assignments; web cookies are ignored. At most 50 own assignments, newest first, with character, armUntil, codeIssued and cancelled. No codes or other accounts. No-store; 120 reads per account per minute.
+      description: Native bearer with companion:assignments; web cookies are ignored. At most 50 own assignments, newest first, with character, testKind, armUntil, codeIssued and cancelled. No codes or other accounts. No-store; 120 reads per account per minute.
       security: [{ deviceCredential: [] }]
       responses:
         '200': { description: "Own controlled assignment summaries" }
@@ -106,7 +128,7 @@ paths:
   /companion/assignments/{captureId}:
     get:
       operationId: getOwnCaptureAssignment
-      description: Requires companion:assignments. Frozen schema-2 descriptor contains match/assignment/capture UUIDs, assignedCharacterId, assignedTeamKey A/B, rosterVersion 1, mode CONTROLLED_TEST, expectedMapProfile DARKSPEAR_DIAGNOSTIC, expectedRoster, issuedAt, armUntil and assignmentCodeSha256. Never returns the plaintext code. Readable after expiry/cancellation for evidence recovery.
+      description: Requires companion:assignments. Frozen schema-2 descriptor contains match/assignment/capture UUIDs, assignedCharacterId, assignedTeamKey A/B, rosterVersion 1, mode CONTROLLED_TEST, expectedMapProfile DARKSPEAR_DIAGNOSTIC, expectedRoster, issuedAt, armUntil and assignmentCodeSha256. CAPTURE_ONLY descriptors additionally carry testKind CAPTURE_ONLY, assignedTeamKey null and exactly one expectedRoster row containing only the declared own character with assignedTeamKey null. This row is a reporter declaration, not an expected game roster. Legacy roster descriptors keep their original shape. Older companions reject the new variant safely and must be updated before issuing a capture-only code. Never returns the plaintext code. Readable after expiry/cancellation for evidence recovery.
       security: [{ deviceCredential: [] }]
       parameters:
         - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
@@ -117,14 +139,15 @@ paths:
   /companion/assignments/{captureId}/issue:
     post:
       operationId: issueOwnCaptureCode
-      description: Requires companion:assignments. Once only, before armUntil, while not cancelled. Returns assignment descriptor and assignmentCode (16 uppercase Crockford characters). Server persists only its SHA-256. A lost issuance requires a fresh assignment unless the addon or this PC already has the code. Ten requests per account per minute; no-store.
+      description: Requires companion:assignments. Once only, before armUntil, while not cancelled. Returns assignment descriptor and assignmentCode (16 uppercase Crockford characters). Server persists only its SHA-256. A lost issuance requires a fresh assignment unless the addon or this PC already has the code. For CAPTURE_ONLY, the native caller must advertise X-RBGS-Capture-Test-Kinds CAPTURE_ONLY. An unsupported caller receives 409 before any code is consumed. Legacy roster issuance needs no capability header. Ten requests per account per minute; no-store.
       security: [{ deviceCredential: [] }]
       parameters:
+        - { in: header, name: X-RBGS-Capture-Test-Kinds, required: false, schema: { type: string, enum: [CAPTURE_ONLY] } }
         - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: "Own plaintext code issued once" }
         '404': { description: "No own assignment" }
-        '409': { description: "Code already issued" }
+        '409': { description: "Code already issued or companion does not support individual capture tests; unsupported capability does not consume the code" }
         '410': { description: "Cancelled or arming window expired" }
   /evidence:
     post:

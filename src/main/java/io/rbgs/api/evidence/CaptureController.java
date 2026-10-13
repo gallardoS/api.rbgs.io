@@ -27,7 +27,7 @@ public class CaptureController {
     @GetMapping("/api/v1/companion/assignments/{captureId}")
     public ResponseEntity<?> descriptor(@RequestHeader(value="Authorization",required=false)String authorization,@PathVariable UUID captureId){var reporter=devices.authorize(authorization,"companion:assignments");limit("read:"+reporter.accountId(),120);return response(captures.descriptor(reporter.accountId(),captureId));}
     @PostMapping("/api/v1/companion/assignments/{captureId}/issue")
-    public ResponseEntity<?> issue(@RequestHeader(value="Authorization",required=false)String authorization,@PathVariable UUID captureId){var reporter=devices.authorize(authorization,"companion:assignments");limit("issue:"+reporter.accountId(),10);return response(captures.issue(reporter.accountId(),captureId));}
+    public ResponseEntity<?> issue(@RequestHeader(value="Authorization",required=false)String authorization,@RequestHeader(value="X-RBGS-Capture-Test-Kinds",required=false)String kinds,@PathVariable UUID captureId){var reporter=devices.authorize(authorization,"companion:assignments");limit("issue:"+reporter.accountId(),10);return response(captures.issue(reporter.accountId(),captureId,"CAPTURE_ONLY".equals(kinds)));}
     @PostMapping("/api/v1/evidence")
     public ResponseEntity<CaptureService.Receipt> ingest(@RequestHeader(value="Authorization",required=false)String authorization,HttpServletRequest request)throws IOException {
         var reporter=devices.authorize(authorization,"evidence:write");limit("write:"+reporter.accountId(),60);return response(captures.ingest(reporter,body(request)));}
