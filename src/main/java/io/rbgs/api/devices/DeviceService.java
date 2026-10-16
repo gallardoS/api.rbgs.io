@@ -101,6 +101,14 @@ public class DeviceService {
     }
 
     @Transactional
+    public void requireLinkedDevice(UUID accountId, UUID deviceId) {
+        DeviceEntity device = deviceId == null ? null : devices.findByIdAndAccountId(deviceId, accountId).orElse(null);
+        if (device == null || device.getRevokedAt() != null || !Instant.now().isBefore(device.getExpiresAt())) {
+            throw new ResponseStatusException(HttpStatus.PRECONDITION_FAILED, "A valid linked companion is required");
+        }
+    }
+
+    @Transactional
     public void revoke(Authentication authentication, UUID id) {
         UUID accountId = currentAccount(authentication);
         DeviceEntity device = devices.lockById(id).filter(d -> d.getAccountId().equals(accountId))

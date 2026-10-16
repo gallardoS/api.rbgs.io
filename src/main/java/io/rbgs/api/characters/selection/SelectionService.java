@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.UUID;
 import io.rbgs.api.identity.AccountRepository;
 import io.rbgs.api.identity.AccountService;
+import io.rbgs.api.devices.DeviceService;
 import io.rbgs.api.seasons.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,6 +23,7 @@ public class SelectionService {
     private final CharacterIdentityRepository identities;
     private final SeasonSelectionRepository selections;
     private final ForeverOwnershipVerifier verifier;
+    private final DeviceService devices;
 
     @Transactional(readOnly = true)
     public PlayContext context(Authentication authentication) {
@@ -52,6 +54,7 @@ public class SelectionService {
             throw conflict("Selection changed on another device; reload selection");
         }
         CharacterIdentity character;
+        devices.requireLinkedDevice(accountId, request.companionDeviceId());
         if (season.getRatingSubjectType() == RatingSubjectType.ACCOUNT) {
             if (request.characterId() != null || request.declaration() == null) {
                 throw badRequest("An account season requires a declaration, not a provider character");

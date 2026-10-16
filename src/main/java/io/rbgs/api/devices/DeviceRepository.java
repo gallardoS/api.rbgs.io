@@ -13,6 +13,8 @@ public interface DeviceRepository extends JpaRepository<DeviceEntity, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @org.springframework.data.jpa.repository.Query("select d from DeviceEntity d where d.tokenHash = :hash")
     Optional<DeviceEntity> lockByTokenHash(String hash);
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    Optional<DeviceEntity> findByIdAndAccountId(UUID id, UUID accountId);
     Optional<DeviceEntity> findByTokenHash(String hash);
     List<DeviceEntity> findByAccountIdOrderByCreatedAtDesc(UUID accountId);
     @org.springframework.data.jpa.repository.Query("select d from DeviceEntity d where d.accountId = :accountId and d.removedAt is null and d.revokedAt is null and d.expiresAt > :now order by d.createdAt desc")

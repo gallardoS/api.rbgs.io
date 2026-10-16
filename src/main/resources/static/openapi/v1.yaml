@@ -465,7 +465,7 @@ paths:
     put:
       operationId: saveSeasonSelection
       summary: Persist the authenticated account's character declaration or verified reference
-      description: Requires X-XSRF-TOKEN and a current active account. Account identity is derived from the session. Send expectedVersion null for first creation and the returned version thereafter, plus the current seasonVersion. ACCOUNT mode requires declaration and no characterId; CHARACTER mode requires characterId and no declaration, associated Forever identity and explicit authenticated ownership verification. The production Forever verifier currently rejects verification with 503. Saving never opens a season or enables matchmaking. Cache-Control is no-store.
+      description: Requires X-XSRF-TOKEN and a current active account. Account identity is derived from the session. companionDeviceId must identify a linked device owned by that account which is neither revoked nor expired; the server rechecks this under a device lock before persisting. Recent heartbeat and capture permissions are separate from this linkage prerequisite. Send expectedVersion null for first creation and the returned version thereafter, plus the current seasonVersion. ACCOUNT mode requires declaration and no characterId; CHARACTER mode requires characterId and no declaration, associated Forever identity and explicit authenticated ownership verification. The production Forever verifier currently rejects verification with 503. Saving never opens a season or enables matchmaking. Cache-Control is no-store.
       requestBody:
         required: true
         content:
@@ -477,10 +477,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SeasonSelection' }
-        '400': { description: "Invalid declaration, role, mode or character reference" }
+        '400': { description: "Invalid declaration, role, mode or character reference, or missing/malformed companionDeviceId" }
         '401': { description: "No Battle.net session" }
         '403': { description: "Missing or inactive account or invalid CSRF token" }
         '409': { description: "No configured season or stale selection or season version; fetch context before retrying" }
+        '412': { description: "Selected companion is missing, belongs to another account, is revoked or has expired" }
         '503': { description: "Configured season missing or authenticated Forever verification unavailable" }
   /email-notifications/feedback/resend:
     post:
@@ -820,10 +821,11 @@ components:
         version: { type: integer, format: int64, minimum: 0 }
     SeasonSelectionRequest:
       type: object
-      required: [seasonId, seasonVersion, role, captainConsent]
+      required: [seasonId, seasonVersion, role, captainConsent, companionDeviceId]
       properties:
         seasonId: { type: string, format: uuid }
         seasonVersion: { type: integer, format: int64, minimum: 0 }
+        companionDeviceId: { type: string, format: uuid, description: "Selected linked companion device belonging to the authenticated account; must not be revoked or expired" }
         expectedVersion: { type: [integer, 'null'], format: int64, minimum: 0, description: "Null for first creation; saved version for replacement" }
         characterId: { type: [string, 'null'], format: uuid }
         declaration:

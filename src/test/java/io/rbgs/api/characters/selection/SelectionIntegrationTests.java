@@ -5,6 +5,7 @@ import java.util.UUID;
 import java.util.List;
 import java.util.concurrent.*;
 import io.rbgs.api.identity.*;
+import io.rbgs.api.devices.DeviceService;
 import io.rbgs.api.seasons.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,11 +34,13 @@ class SelectionIntegrationTests {
     @Autowired SeasonRepository seasons;
     @Autowired SelectionService service;
     @Autowired JdbcTemplate db;
+    @Autowired DeviceService devices;
     @MockitoBean SelectionSettings settings;
     @MockitoBean ForeverOwnershipVerifier verifier;
     private Account account;
     private SeasonEntity season;
     private String subject;
+    private UUID deviceId;
     private static final String ISSUER = "https://idp.example";
 
     @BeforeEach void setup() {
@@ -45,11 +48,16 @@ class SelectionIntegrationTests {
         account = accounts.upsert(ISSUER, subject, "Fixture#1234");
         season = seasons.saveAndFlush(new SeasonEntity("Fixture", SeasonKind.BETA, RatingSubjectType.ACCOUNT));
         when(settings.seasonId()).thenReturn(season.getId());
+        var pairing = devices.start();
+        devices.approve(authentication(), pairing.code());
+        deviceId = devices.exchange(pairing.pollingSecret()).deviceId();
     }
     @AfterEach void cleanup() {
         db.update("DELETE FROM rbgs.season_selections WHERE season_id = ?", season.getId());
         db.update("DELETE FROM rbgs.character_identities WHERE account_id = ?", account.id());
         seasons.deleteById(season.getId());
+        db.update("DELETE FROM rbgs.device_pairings WHERE account_id = ?", account.id());
+        db.update("DELETE FROM rbgs.devices WHERE account_id = ?", account.id());
         db.update("DELETE FROM rbgs.accounts WHERE id = ?", account.id());
     }
     private RequestPostProcessor login() {
@@ -58,8 +66,8 @@ class SelectionIntegrationTests {
     private String request(String version, String name) {
         return """
             {"seasonId":"%s","seasonVersion":%d,"expectedVersion":%s,
-             "declaration":{"name":"%s","realm":"Normal"},"role":"HEALER","captainConsent":false}
-            """.formatted(season.getId(), season.getVersion(), version, name);
+             "declaration":{"name":"%s","realm":"Normal"},"role":"HEALER","captainConsent":false,"companionDeviceId":"%s"}
+            """.formatted(season.getId(), season.getVersion(), version, name, deviceId);
     }
     private OAuth2AuthenticationToken authentication() {
         var now = Instant.now();
@@ -155,8 +163,8 @@ class SelectionIntegrationTests {
             """, id, account.id());
         String body = """
             {"seasonId":"%s","seasonVersion":%d,"expectedVersion":null,
-             "characterId":"%s","role":"FC","captainConsent":true}
-            """.formatted(season.getId(),season.getVersion(),id);
+             "characterId":"%s","role":"FC","captainConsent":true,"companionDeviceId":"%s"}
+            """.formatted(season.getId(),season.getVersion(),id,deviceId);
         mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json").content(body))
             .andExpect(status().isOk()).andExpect(jsonPath("$.ratingSubjectId").value(id.toString()));
         verify(verifier).requireOwnership(eq(account.id()),any(),any());
@@ -172,7 +180,7 @@ class SelectionIntegrationTests {
         var start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var command = new SelectionRequest(season.getId(),season.getVersion(),null,null,
-                new SelectionRequest.Declaration("Fixture","Normal"),MatchRole.DPS,false);
+                new SelectionRequest.Declaration("Fixture","Normal"),MatchRole.DPS,false,deviceId);
             Callable<Integer> write = () -> {
                 ready.countDown();
                 assertTrue(start.await(10,TimeUnit.SECONDS));
@@ -184,5 +192,66 @@ class SelectionIntegrationTests {
             assertEquals(java.util.Set.of(200,409),java.util.Set.of(a.get(15,TimeUnit.SECONDS),b.get(15,TimeUnit.SECONDS)));
             assertEquals(1,db.queryForObject("SELECT COUNT(*) FROM rbgs.season_selections WHERE account_id = ? AND season_id = ?",Integer.class,account.id(),season.getId()));
         }
+    }
+
+    @Test void missingMalformedAndUnknownCompanionCannotBypassTheButton() throws Exception {
+        String body = request("null", "Fixture");
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(body.replace(",\"companionDeviceId\":\"" + deviceId + "\"", "")))
+            .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(body.replace(deviceId.toString(), "not-a-uuid")))
+            .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(body.replace(deviceId.toString(), UUID.randomUUID().toString())))
+            .andExpect(status().isPreconditionFailed());
+        assertNoSelectionWrites();
+    }
+
+    @Test void companionOwnedByAnotherAccountCannotAuthorizeSelection() throws Exception {
+        String otherSubject = UUID.randomUUID().toString();
+        var other = accounts.upsert(ISSUER, otherSubject, "Other#1234");
+        try {
+            mvc.perform(put("/api/v1/me/selection")
+                .with(oidcLogin().idToken(t -> t.issuer(ISSUER).subject(otherSubject))).with(csrf())
+                .contentType("application/json").content(request("null", "Stolen device")))
+                .andExpect(status().isPreconditionFailed());
+            assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM rbgs.season_selections WHERE account_id = ?", Integer.class, other.id()));
+            assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM rbgs.character_identities WHERE account_id = ?", Integer.class, other.id()));
+        } finally { db.update("DELETE FROM rbgs.accounts WHERE id = ?", other.id()); }
+        assertNoSelectionWrites();
+    }
+
+    @Test void revokedSelectedCompanionCannotBeReplacedByAnotherLinkedDevice() throws Exception {
+        var pairing = devices.start();
+        devices.approve(authentication(), pairing.code());
+        devices.exchange(pairing.pollingSecret());
+        devices.revoke(authentication(), deviceId);
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(request("null", "Fixture"))).andExpect(status().isPreconditionFailed());
+        assertNoSelectionWrites();
+    }
+
+    @Test void expiryAfterFirstSaveRejectsUpdatesAndPreservesExistingSelection() throws Exception {
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(request("null", "Saved"))).andExpect(status().isOk());
+        db.update("UPDATE rbgs.devices SET expires_at = now() - interval '1 second' WHERE id = ?", deviceId);
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(request("0", "Must not save"))).andExpect(status().isPreconditionFailed());
+        mvc.perform(get("/api/v1/play/context").with(login()))
+            .andExpect(jsonPath("$.selection.name").value("Saved"))
+            .andExpect(jsonPath("$.selection.version").value(0));
+        assertEquals(1, db.queryForObject("SELECT COUNT(*) FROM rbgs.character_identities WHERE account_id = ?", Integer.class, account.id()));
+    }
+
+    @Test void linkageIsCheckedOnTheServerWithoutRequiringARecentHeartbeat() throws Exception {
+        assertFalse(devices.list(authentication()).getFirst().connected());
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(request("null", "Linked"))).andExpect(status().isOk());
+    }
+
+    private void assertNoSelectionWrites() {
+        assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM rbgs.season_selections WHERE account_id = ?", Integer.class, account.id()));
+        assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM rbgs.character_identities WHERE account_id = ?", Integer.class, account.id()));
     }
 }

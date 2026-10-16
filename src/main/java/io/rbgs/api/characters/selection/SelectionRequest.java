@@ -10,7 +10,8 @@ public record SelectionRequest(
     UUID characterId,
     @Valid Declaration declaration,
     @NotNull MatchRole role,
-    @NotNull Boolean captainConsent) {
+    @NotNull Boolean captainConsent,
+    @NotNull UUID companionDeviceId) {
     public record Declaration(
         @NotBlank @Size(max = 100) @Pattern(regexp = "^[^\\p{Cntrl}]+$") String name,
         @NotBlank @Size(max = 100) @Pattern(regexp = "^[^\\p{Cntrl}]+$") String realm) { }
