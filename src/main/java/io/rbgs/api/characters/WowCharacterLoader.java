@@ -26,12 +26,15 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class WowCharacterLoader {
+    private static final List<String> NAMESPACES = List.of(
+            "profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us", "profile-classic-us");
+    private record RegionalAccount(String region, long id) { }
     private final RestClient client;
     private final ThreadPoolExecutor requests = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(256), Thread.ofPlatform().daemon().name("wow-api-", 0).factory());
 
     public WowCharacterLoader(RestClient.Builder builder) {
-        this.client = builder.baseUrl("https://eu.api.blizzard.com").build();
+        this.client = builder.build();
     }
 
     @PreDestroy
@@ -73,13 +76,14 @@ public class WowCharacterLoader {
         }
         var tasks = new ArrayList<Future<?>>();
         try {
-            var accounts = new LinkedHashMap<Long, List<WowAccountProfile.WowCharacter>>();
+            var accounts = new LinkedHashMap<RegionalAccount, List<WowAccountProfile.WowCharacter>>();
             boolean foundProfile = false;
-            for (String namespace : List.of("profile-classic1x-eu", "profile-classic-eu")) {
+            for (String namespace : NAMESPACES) {
                 WowAccountProfile profile;
                 try {
                     Future<WowAccountProfile> task = submit(() -> client.get()
-                            .uri("/profile/user/wow?namespace=" + namespace + "&locale=en_GB")
+                            .uri("https://" + region(namespace) + ".api.blizzard.com/profile/user/wow?namespace="
+                                    + namespace + "&locale=" + locale(namespace))
                             .headers(headers -> headers.setBearerAuth(token))
                             .retrieve().body(WowAccountProfile.class), deadline);
                     tasks.add(task);
@@ -96,14 +100,14 @@ public class WowCharacterLoader {
                     if (account.characters() == null) {
                         throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid response from Blizzard");
                     }
-                    var characters = accounts.computeIfAbsent(account.id(), id -> new ArrayList<>());
+                    var characters = accounts.computeIfAbsent(new RegionalAccount(region(namespace), account.id()), id -> new ArrayList<>());
                     account.characters().stream().filter(character -> character.level() >= 60)
                             .map(character -> basicCharacter(character, namespace))
                             .forEach(characters::add);
                 }
             }
             if (!foundProfile) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW Classic profile in EU");
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW Classic profile in EU or North America");
             }
             var details = new LinkedHashMap<WowAccountProfile.WowCharacter, Future<WowAccountProfile.WowCharacter>>();
             for (var characters : accounts.values()) {
@@ -129,7 +133,7 @@ public class WowCharacterLoader {
                 }
             }
             return new WowAccountProfile(accounts.entrySet().stream().map(account ->
-                    new WowAccountProfile.WowAccount(account.getKey(), List.copyOf(account.getValue()))).toList());
+                    new WowAccountProfile.WowAccount(account.getKey().id(), List.copyOf(account.getValue()))).toList());
         } catch (RestClientResponseException error) {
             if (error.getStatusCode().value() == 401) {
                 throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in with Battle.net again");
@@ -152,14 +156,23 @@ public class WowCharacterLoader {
                 character.avatarUrl(), character.insetUrl(), namespace, character.guild(), character.gender());
     }
 
+    private static String region(String namespace) {
+        return namespace.endsWith("-us") ? "us" : "eu";
+    }
+
+    private static String locale(String namespace) {
+        return namespace.endsWith("-us") ? "en_US" : "en_GB";
+    }
+
     private WowAccountProfile.WowCharacter withDetails(WowAccountProfile.WowCharacter character, String token, String namespace, long deadline) {
         if (System.nanoTime() >= deadline || Thread.currentThread().isInterrupted()) return character;
         String avatar = null;
         String inset = null;
         try {
             CharacterMedia media = client.get().uri(builder -> builder
+                    .scheme("https").host(region(namespace) + ".api.blizzard.com")
                     .path("/profile/wow/character/{realm}/{name}/character-media")
-                    .queryParam("namespace", namespace).queryParam("locale", "en_GB")
+                    .queryParam("namespace", namespace).queryParam("locale", locale(namespace))
                     .build(character.realm().slug(), character.name().toLowerCase(Locale.ROOT)))
                     .headers(headers -> headers.setBearerAuth(token)).retrieve().body(CharacterMedia.class);
             if (media != null && media.assets() != null) {
@@ -175,8 +188,9 @@ public class WowCharacterLoader {
         var gender = character.gender();
         try {
             CharacterProfile profile = System.nanoTime() >= deadline || Thread.currentThread().isInterrupted() ? null : client.get().uri(builder -> builder
+                    .scheme("https").host(region(namespace) + ".api.blizzard.com")
                     .path("/profile/wow/character/{realm}/{name}")
-                    .queryParam("namespace", namespace).queryParam("locale", "en_GB")
+                    .queryParam("namespace", namespace).queryParam("locale", locale(namespace))
                     .build(character.realm().slug(), character.name().toLowerCase(Locale.ROOT)))
                     .headers(headers -> headers.setBearerAuth(token)).retrieve().body(CharacterProfile.class);
             if (profile != null) {

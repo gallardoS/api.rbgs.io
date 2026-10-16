@@ -79,6 +79,7 @@ class WowCharacterServiceTests {
                 .andRespond(withResourceNotFound());
         expectCharacterProfile(server, "player", "profile-classic1x-eu", "{\"guild\":{\"id\":12,\"name\":\"MANDOKIR\"},\"gender\":{\"type\":\"MALE\",\"name\":\"Male\"}}");
         expectMissingProfile(server, "profile-classic-eu");
+        expectMissingNorthAmerica(server);
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(42, profile.wowAccounts().getFirst().characters().getFirst().id());
         assertEquals("Warrior", profile.wowAccounts().getFirst().characters().getFirst().playableClass().name());
@@ -106,6 +107,7 @@ class WowCharacterServiceTests {
         server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/player?namespace=profile-classic1x-eu&locale=en_GB"))
                 .andRespond(withResourceNotFound());
         expectMissingProfile(server, "profile-classic-eu");
+        expectMissingNorthAmerica(server);
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(1, profile.wowAccounts().getFirst().characters().size());
         assertEquals("https://render.worldofwarcraft.com/avatar.jpg",
@@ -149,6 +151,7 @@ class WowCharacterServiceTests {
         server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/other/character-media?namespace=profile-classic-eu&locale=en_GB"))
                 .andRespond(withResourceNotFound());
         expectCharacterProfile(server, "other", "profile-classic-eu", "{}");
+        expectMissingNorthAmerica(server);
         var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
         assertEquals(2, profile.wowAccounts().size());
         var characters = profile.wowAccounts().getFirst().characters();
@@ -172,17 +175,114 @@ class WowCharacterServiceTests {
         expectMissingProfile(server, "profile-classic1x-eu");
         server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=profile-classic-eu&locale=en_GB"))
                 .andRespond(withSuccess("{\"wow_accounts\":[]}", MediaType.APPLICATION_JSON));
+        expectMissingNorthAmerica(server);
         assertTrue(service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60))).wowAccounts().isEmpty());
         server.verify();
     }
 
     @Test
-    void returnsNotFoundOnlyWhenBothBranchesHaveNoProfile() {
+    void northAmericanEraCharactersAreReturnedWhenBothEuropeanProfilesAreMissing() {
         var builder = RestClient.builder();
         var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
         var service = service(builder);
         expectMissingProfile(server, "profile-classic1x-eu");
         expectMissingProfile(server, "profile-classic-eu");
+        server.expect(requestTo("https://us.api.blizzard.com/profile/user/wow?namespace=profile-classic1x-us&locale=en_US"))
+                .andExpect(header("Authorization", "Bearer private-token"))
+                .andRespond(withSuccess("""
+                    {"wow_accounts":[{"id":7,"characters":[
+                    {"id":42,"name":"Player","realm":{"id":1,"name":"Realm","slug":"realm"},"level":60},
+                    {"id":43,"name":"Low","realm":{"id":1,"slug":"realm"},"level":59}]}]}
+                    """, MediaType.APPLICATION_JSON));
+        expectMissingProfile(server, "profile-classic-us");
+        server.expect(requestTo("https://us.api.blizzard.com/profile/wow/character/realm/player/character-media?namespace=profile-classic1x-us&locale=en_US"))
+                .andExpect(header("Authorization", "Bearer private-token"))
+                .andRespond(withSuccess("""
+                    {"assets":[{"key":"avatar","value":"https://render.worldofwarcraft.com/us-avatar.jpg"}]}
+                    """, MediaType.APPLICATION_JSON));
+        expectCharacterProfile(server, "player", "profile-classic1x-us", "{\"guild\":{\"name\":\"NA Guild\"},\"gender\":{\"type\":\"FEMALE\"}}");
+        var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
+        var characters = profile.wowAccounts().getFirst().characters();
+        assertEquals(1, characters.size());
+        assertEquals("profile-classic1x-us", characters.getFirst().namespace());
+        assertEquals("https://render.worldofwarcraft.com/us-avatar.jpg", characters.getFirst().avatarUrl());
+        assertEquals("NA Guild", characters.getFirst().guild().name());
+        assertEquals("FEMALE", characters.getFirst().gender().type());
+        server.verify();
+    }
+
+    @Test
+    void northAmericanProgressionCharactersAreReturnedWithoutAnEraProfile() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+        var service = service(builder);
+        expectMissingProfile(server, "profile-classic1x-eu");
+        expectMissingProfile(server, "profile-classic-eu");
+        expectMissingProfile(server, "profile-classic1x-us");
+        server.expect(requestTo("https://us.api.blizzard.com/profile/user/wow?namespace=profile-classic-us&locale=en_US"))
+                .andExpect(header("Authorization", "Bearer private-token"))
+                .andRespond(withSuccess(ownedCharacters(1).replace("\"level\":60", "\"level\":85"), MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://us.api.blizzard.com/profile/wow/character/realm/player0/character-media?namespace=profile-classic-us&locale=en_US"))
+                .andRespond(withResourceNotFound());
+        expectCharacterProfile(server, "player0", "profile-classic-us", "{}");
+        var character = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)))
+                .wowAccounts().getFirst().characters().getFirst();
+        assertEquals("profile-classic-us", character.namespace());
+        assertEquals(85, character.level());
+        server.verify();
+    }
+
+    @Test
+    void matchingNumericIdsInDifferentRegionsRemainSeparate() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+        var service = service(builder);
+        for (String region : List.of("eu", "us")) {
+            String namespace = "profile-classic1x-" + region;
+            String locale = region.equals("us") ? "en_US" : "en_GB";
+            server.expect(requestTo("https://" + region + ".api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=" + locale))
+                    .andRespond(withSuccess(ownedCharacters(1), MediaType.APPLICATION_JSON));
+            expectMissingProfile(server, "profile-classic-" + region);
+            server.expect(requestTo("https://" + region + ".api.blizzard.com/profile/wow/character/realm/player0/character-media?namespace=" + namespace + "&locale=" + locale))
+                    .andRespond(withResourceNotFound());
+            expectCharacterProfile(server, "player0", namespace, "{}");
+        }
+        var profile = service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
+        assertEquals(2, profile.wowAccounts().size());
+        assertTrue(profile.wowAccounts().stream().allMatch(account -> account.id() == 7 && account.characters().size() == 1));
+        assertEquals(Set.of("profile-classic1x-eu", "profile-classic1x-us"), profile.wowAccounts().stream()
+                .flatMap(account -> account.characters().stream()).map(character -> character.namespace()).collect(java.util.stream.Collectors.toSet()));
+        server.verify();
+    }
+
+    @Test
+    void northAmericanProviderFailuresDoNotBecomeAnEmptyOrPartialSuccess() {
+        for (var status : List.of(org.springframework.http.HttpStatus.UNAUTHORIZED,
+                org.springframework.http.HttpStatus.FORBIDDEN, org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)) {
+            var builder = RestClient.builder();
+            var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+            var service = service(builder);
+            server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=profile-classic1x-eu&locale=en_GB"))
+                    .andRespond(withSuccess("{\"wow_accounts\":[]}", MediaType.APPLICATION_JSON));
+            expectMissingProfile(server, "profile-classic-eu");
+            server.expect(requestTo("https://us.api.blizzard.com/profile/user/wow?namespace=profile-classic1x-us&locale=en_US"))
+                    .andRespond(withStatus(status).body("sensitive-provider-details"));
+            var error = assertThrows(ResponseStatusException.class,
+                    () -> service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60))));
+            assertEquals(status.is5xxServerError() ? 502 : status.value(), error.getStatusCode().value());
+            assertFalse(error.getMessage().contains("sensitive-provider-details"));
+            server.verify();
+        }
+    }
+
+    @Test
+    void returnsNotFoundOnlyWhenNeitherRegionHasAnyClassicProfile() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+        var service = service(builder);
+        expectMissingProfile(server, "profile-classic1x-eu");
+        expectMissingProfile(server, "profile-classic-eu");
+        expectMissingNorthAmerica(server);
         assertEquals(404, assertThrows(ResponseStatusException.class,
                 () -> service.currentCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60))))
                 .getStatusCode().value());
@@ -203,12 +303,21 @@ class WowCharacterServiceTests {
     }
 
     private void expectMissingProfile(MockRestServiceServer server, String namespace) {
-        server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=en_GB"))
+        String region = namespace.endsWith("-us") ? "us" : "eu";
+        String locale = namespace.endsWith("-us") ? "en_US" : "en_GB";
+        server.expect(requestTo("https://" + region + ".api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=" + locale))
                 .andRespond(withResourceNotFound());
     }
 
+    private void expectMissingNorthAmerica(MockRestServiceServer server) {
+        expectMissingProfile(server, "profile-classic1x-us");
+        expectMissingProfile(server, "profile-classic-us");
+    }
+
     private void expectCharacterProfile(MockRestServiceServer server, String name, String namespace, String body) {
-        server.expect(requestTo("https://eu.api.blizzard.com/profile/wow/character/realm/" + name + "?namespace=" + namespace + "&locale=en_GB"))
+        String region = namespace.endsWith("-us") ? "us" : "eu";
+        String locale = namespace.endsWith("-us") ? "en_US" : "en_GB";
+        server.expect(requestTo("https://" + region + ".api.blizzard.com/profile/wow/character/realm/" + name + "?namespace=" + namespace + "&locale=" + locale))
                 .andExpect(header("Authorization", "Bearer private-token"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
     }
@@ -246,21 +355,21 @@ class WowCharacterServiceTests {
         var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
         var first = service.currentCharacters(auth);
         assertSame(first, service.currentCharacters(auth));
-        assertEquals(2, calls.get());
+        assertEquals(4, calls.get());
         var token = auth.getAccessToken();
         service.currentCharacters(new OAuth2AuthorizedClient(auth.getClientRegistration(), "other-account", token));
-        assertEquals(4, calls.get());
+        assertEquals(8, calls.get());
         var rotated = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, "rotated-token",
                 token.getIssuedAt(), token.getExpiresAt(), token.getScopes());
         service.currentCharacters(new OAuth2AuthorizedClient(auth.getClientRegistration(), "user", rotated));
-        assertEquals(6, calls.get());
+        assertEquals(12, calls.get());
         assertEquals(401, assertThrows(ResponseStatusException.class,
                 () -> service.currentCharacters(client(Set.of("wow.profile"), Instant.now().minusSeconds(1))))
                 .getStatusCode().value());
         assertEquals(403, assertThrows(ResponseStatusException.class,
                 () -> service.currentCharacters(client(Set.of("openid"), Instant.now().plusSeconds(60))))
                 .getStatusCode().value());
-        assertEquals(6, calls.get());
+        assertEquals(12, calls.get());
     }
 
     @Test
@@ -272,7 +381,7 @@ class WowCharacterServiceTests {
         var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
         service.currentCharacters(auth);
         service.currentCharacters(auth);
-        assertEquals(4, calls.get());
+        assertEquals(8, calls.get());
     }
 
     @Test
@@ -298,7 +407,7 @@ class WowCharacterServiceTests {
             assertThrows(java.util.concurrent.TimeoutException.class, () -> second.get(50, TimeUnit.MILLISECONDS));
             release.countDown();
             assertSame(first.get(2, TimeUnit.SECONDS), second.get(2, TimeUnit.SECONDS));
-            assertEquals(2, calls.get());
+            assertEquals(4, calls.get());
         } finally { release.countDown(); }
     }
 
@@ -334,6 +443,7 @@ class WowCharacterServiceTests {
             assertEquals(4, peak.get());
             assertEquals(4, calls.get());
             assertEquals(16, profile.wowAccounts().getFirst().characters().size());
+            assertEquals(2, profile.wowAccounts().size());
             assertTrue(profile.wowAccounts().getFirst().characters().stream().allMatch(character ->
                     character.avatarUrl() == null && character.namespace() != null));
         } finally { release.countDown(); }
@@ -356,7 +466,7 @@ class WowCharacterServiceTests {
         assertEquals(504, assertThrows(ResponseStatusException.class, () -> service.currentCharacters(auth))
                 .getStatusCode().value());
         assertTrue(service.currentCharacters(auth).wowAccounts().isEmpty());
-        assertEquals(3, calls.get());
+        assertEquals(5, calls.get());
     }
 
     private AtomicInteger emptyProfiles(MockRestServiceServer server) {
