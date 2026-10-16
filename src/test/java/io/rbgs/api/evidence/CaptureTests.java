@@ -71,14 +71,14 @@ class CaptureTests {
   mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token()).header("X-RBGS-Capture-Test-Kinds","CAPTURE_ONLY"))
    .andExpect(status().isOk()).andExpect(jsonPath("$.assignment.testKind").value("CAPTURE_ONLY"));
  }
- DeviceService.Token token(boolean capture){var p=devices.start("Capture fixture",capture?DeviceService.CAPTURE_SCOPE:DeviceService.SCOPE);devices.approve(auth(),p.code(),capture);return devices.exchange(p.pollingSecret());}
+ DeviceService.Token token(boolean capture){var p=devices.start(capture?DeviceService.CAPTURE_SCOPE:DeviceService.SCOPE);devices.approve(auth(),p.code(),capture);return devices.exchange(p.pollingSecret());}
  Map<String,Object> payload(UUID capture,Map<String,Object> issued)throws Exception {
   byte[] fixture=getClass().getResourceAsStream("/capture/product-final.sanitized.json").readAllBytes();var root=json.parse(fixture);var result=new LinkedHashMap<>(CaptureJson.object(((List<?>)root.get("captures")).getFirst()));
   var descriptor=CaptureJson.object(issued.get("assignment"));result.put("schemaVersion",2);result.put("matchId",descriptor.get("matchId").toString());result.put("assignmentId",descriptor.get("assignmentId").toString());result.put("captureId",capture.toString());result.put("assignmentCode",issued.get("assignmentCode"));
   CaptureJson.object(result.get("client")).put("companionVersion","0.0.1");var c=CaptureJson.object(result.get("capture"));c.put("incompleteReason",null);
   for(Object row:(List<?>)c.get("roster"))CaptureJson.object(CaptureJson.object(row).get("character")).putIfAbsent("realm",null);return result;
  }
- @Test void old_scopes_do_not_upgrade_and_capture_permissions_require_explicit_approval(){var p=devices.start("Scoped fixture",DeviceService.CAPTURE_SCOPE);
+ @Test void old_scopes_do_not_upgrade_and_capture_permissions_require_explicit_approval(){var p=devices.start(DeviceService.CAPTURE_SCOPE);
   assertEquals(403,assertThrows(ResponseStatusException.class,()->devices.approve(auth(),p.code())).getStatusCode().value());devices.approve(auth(),p.code(),true);var fresh=devices.exchange(p.pollingSecret());assertEquals(DeviceService.CAPTURE_SCOPE,fresh.scope());
   var old=token(false);assertEquals(DeviceService.SCOPE,devices.status("Bearer "+old.token()).scope());assertEquals(403,assertThrows(ResponseStatusException.class,()->devices.authorize("Bearer "+old.token(),"evidence:write")).getStatusCode().value());}
  @Test void moderator_route_uses_fresh_role_csrf_and_never_device_credentials()throws Exception {

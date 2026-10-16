@@ -6,6 +6,98 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /device-launches:
+    post:
+      operationId: authorizeCompanionLaunch
+      summary: Open and connect the companion with capture permissions
+      description: Active web session and X-XSRF-TOKEN required. The user-initiated web action submits the approved linking and capture authorization. Derives the account from the session. Returns a 120-second launch ticket for rbgs-companion://connect/TICKET, never a device credential. Ten requests per identity per minute. Ticket must not be logged or stored persistently.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acceptCapturePermissions]
+              properties:
+                acceptCapturePermissions: { type: boolean, const: true }
+      responses:
+        '200':
+          description: 'Short-lived native launch ticket; no-store'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, launchSecret, expiresAt]
+                properties:
+                  id: { type: string, format: uuid }
+                  launchSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+                  expiresAt: { type: string, format: date-time }
+        '401': { description: 'Web session required' }
+        '403': { description: 'CSRF, active account and explicit capture consent required' }
+        '429': { description: 'Retry-After 60 seconds' }
+  /device-launches/{id}:
+    get:
+      operationId: inspectCompanionLaunch
+      summary: Read connection progress for an own launch
+      description: Only the active account that created the launch can inspect it. PAIRED requires an authenticated native heartbeat after creation. No credential, ticket or native proof is returned. Poll every two seconds; 120 reads per identity per minute. Browser selects the returned own device after completion.
+      security: [{ webSession: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 'Own connection progress; no-store'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, deviceId, expiresAt]
+                properties:
+                  status: { type: string, enum: [PENDING, CONNECTING, PAIRED] }
+                  deviceId: { type: [string, 'null'], format: uuid, description: 'Only returned after the native heartbeat' }
+                  expiresAt: { type: string, format: date-time }
+        '401': { description: 'Web session required' }
+        '403': { description: 'Active account required' }
+        '410': { description: 'Unknown, expired, another account, or revoked/expired device' }
+        '429': { description: 'Retry-After 60 seconds' }
+  /companion/connect:
+    post:
+      operationId: redeemCompanionLaunch
+      summary: Redeem a web launch from native code
+      description: Stateless native transport; ignores web cookies and rejects Origin or Sec-Fetch-Site headers. Requires the web-issued launchSecret and a new 32-byte random lowercase-hex clientSecret held only in native memory. First redemption atomically binds the proof and device; same proof may recover a lost response within ticket expiry. Different proofs and revoked/expired devices cannot replay. Optional existing bearer reuses the same account device and upgrades capture scope without rotating its credential; a different account returns 409. Invalid bearer returns 401 and native may retry without it. New issuance obeys the five-device limit. All credentials remain hashed in storage. Native verifies and saves credentials in Windows before sending heartbeat.
+      security: []
+      parameters:
+        - { name: Authorization, in: header, required: false, schema: { type: string }, description: 'Optional existing device Bearer credential' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [launchSecret, clientSecret]
+              properties:
+                launchSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+                clientSecret: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '200':
+          description: 'Native credential issuance or existing credential reuse; no-store'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, token, deviceId, expiresAt, scope]
+                properties:
+                  status: { type: string, const: PAIRED }
+                  token: { type: [string, 'null'], pattern: '^[A-Za-z0-9_-]{43}$', description: 'Null when reusing the existing bearer' }
+                  deviceId: { type: string, format: uuid }
+                  expiresAt: { type: string, format: date-time }
+                  scope: { type: string, const: 'companion:status companion:assignments evidence:write' }
+        '400': { description: 'Invalid ticket or native proof' }
+        '401': { description: 'Invalid, revoked or expired supplied bearer' }
+        '403': { description: 'Browser transport forbidden' }
+        '409': { description: 'Different account or active device limit reached' }
+        '410': { description: 'Unknown, expired, already claimed with another proof, revoked device or inactive launch account' }
+        '429': { description: 'Retry-After 60 seconds; 120 per IP and 30 per ticket per minute' }
   /companion/heartbeat:
     post:
       operationId: recordCompanionHeartbeat
@@ -29,7 +121,7 @@ paths:
             schema: { $ref: '#/components/schemas/BrowserPairingApproval' }
       responses:
         '200':
-          description: 'Name, signed-in accountName, scope, expiresAt, PENDING/APPROVED/PAIRED and nullable deviceId; no-store'
+          description: 'Signed-in accountName, scope, expiresAt, PENDING/APPROVED/PAIRED and nullable deviceId; no device name; no-store'
         '403': { description: 'Web account and CSRF required; device bearer is insufficient' }
         '410': { description: 'Unknown, expired or approved for another account' }
   /device-pairings/browser/approve:
@@ -215,9 +307,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name]
               properties:
-                name: { type: string, minLength: 1, maxLength: 80, pattern: '^[^\u0000-\u001F\u007F]+$' }
                 scope: { type: string, enum: ['companion:status', 'companion:status companion:assignments evidence:write'], default: 'companion:status' }
       responses:
         '200':
@@ -233,7 +323,7 @@ paths:
                   expiresAt: { type: string, format: date-time }
                   intervalSeconds: { type: integer, const: 5 }
                   approvalSecret: { type: string, pattern: '^[A-Za-z0-9_-]{43}$', description: 'Short-lived browser approval handle; cannot exchange a device credential' }
-        '400': { description: "Invalid device name" }
+        '400': { description: "Invalid scope" }
         '429': { description: "Rate limited; Retry-After is 60 seconds" }
   /device-pairings/approve:
     post:
@@ -295,11 +385,11 @@ paths:
     get:
       operationId: listMyDevices
       summary: List this account's devices without credentials
-      description: Requires current active web account. Establishes CSRF cookie; no-store. Paired does not mean currently connected or in-game. Revoked and expired devices remain visible.
+      description: Requires current active web account. Establishes CSRF cookie; no-store. Returns only devices with unrevoked, unexpired access that have not been removed from the listing. Revoked and expired registrations are retained internally for historical references and disappear automatically from this response. A valid offline device remains listed; paired does not mean currently connected or in-game.
       security: [{ webSession: [] }]
       responses:
         '200':
-          description: Own devices, newest first
+          description: Own devices with valid access, newest first
           content:
             application/json:
               schema:
@@ -307,6 +397,21 @@ paths:
                 items: { $ref: '#/components/schemas/Device' }
         '401': { description: "No web session" }
         '403': { description: "Inactive account" }
+  /devices/{id}/record:
+    delete:
+      operationId: removeInactiveDeviceFromList
+      deprecated: true
+      summary: Remove an own revoked or expired device from the visible list
+      description: Active web session and X-XSRF-TOKEN required. Server checks account ownership and locks the device. Only revoked or expired devices may be removed; an offline device with valid access must first be revoked. Repeated removal is idempotent. V16 records removed_at and excludes the device from devices/me while preserving credential history, pairing links and capture evidence references. This never grants or restores device access.
+      security: [{ webSession: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Removed from the list; no-store' }
+        '401': { description: 'Web session required; device bearer cannot substitute it' }
+        '403': { description: 'Inactive account or missing/invalid CSRF' }
+        '404': { description: 'Unknown device or belongs to another account' }
+        '409': { description: 'Device access remains active; revoke first' }
   /devices/{id}:
     delete:
       operationId: revokeMyDevice
@@ -681,10 +786,9 @@ components:
         contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     Device:
       type: object
-      required: [id, name, createdAt, expiresAt, revokedAt, scope, lastSeenAt, connected]
+      required: [id, createdAt, expiresAt, revokedAt, scope, lastSeenAt, connected]
       properties:
         id: { type: string, format: uuid }
-        name: { type: string, maxLength: 80 }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         revokedAt: { type: [string, 'null'], format: date-time }

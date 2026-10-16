@@ -13,7 +13,6 @@ public class PairingEntity {
     @Id private UUID id;
     @Column(name = "code_hash", nullable = false, length = 64) private String codeHash;
     @Column(name = "polling_hash", nullable = false, length = 64) private String pollingHash;
-    @Column(nullable = false, length = 80) private String name;
     @Column(name = "expires_at", nullable = false) private Instant expiresAt;
     @Column(name = "account_id") private UUID accountId;
     @Column(name = "consumed_at") private Instant consumedAt;
@@ -21,9 +20,9 @@ public class PairingEntity {
     @Column(name = "approval_hash", length = 64) private String approvalHash;
     @Column(name = "device_id") private UUID deviceId;
 
-    PairingEntity(String codeHash, String pollingHash, String name, Instant now, String scope) {
+    PairingEntity(String codeHash, String pollingHash, Instant now, String scope) {
         id = UUID.randomUUID(); this.codeHash = codeHash; this.pollingHash = pollingHash;
-        this.name = name; expiresAt = now.plusSeconds(300);
+        expiresAt = now.plusSeconds(300);
         requestedScope = scope;
     }
     void approve(UUID accountId) { this.accountId = accountId; }

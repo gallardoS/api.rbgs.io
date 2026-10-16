@@ -18,12 +18,39 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class DeviceController {
     private final DeviceService devices;
+    private final DeviceLaunchService launches;
     private final Cache<String, AtomicInteger> limits = Caffeine.newBuilder().maximumSize(10000)
             .expireAfterWrite(Duration.ofMinutes(1)).build();
-    public record Start(@NotBlank @Size(max = 80) @Pattern(regexp = "[^\\p{Cntrl}]+") String name, @Size(max=128) String scope) {}
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record Start(@Size(max=128) String scope) {}
     public record Approval(@NotNull @Pattern(regexp = "[A-HJ-NP-Z2-9]{10}") String code, Boolean acceptCapturePermissions) {}
     public record Poll(@NotNull @Pattern(regexp = "[A-Za-z0-9_-]{43}") String pollingSecret) {}
     public record BrowserApproval(@NotNull @Pattern(regexp="[A-Za-z0-9_-]{43}") String approvalSecret, Boolean acceptCapturePermissions) {}
+    public record WebLaunch(@NotNull Boolean acceptCapturePermissions) {}
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record WebClaim(@NotNull @Pattern(regexp="[A-Za-z0-9_-]{43}") String launchSecret,
+            @NotNull @Pattern(regexp="[a-f0-9]{64}") String clientSecret) {}
+
+    @PostMapping("/api/v1/device-launches")
+    public ResponseEntity<DeviceLaunchService.Launch> launch(Authentication auth,@Valid @RequestBody WebLaunch request) {
+        limit("launch:"+auth.getName(),10);
+        return response(launches.start(auth,Boolean.TRUE.equals(request.acceptCapturePermissions())));
+    }
+    @GetMapping("/api/v1/device-launches/{id}")
+    public ResponseEntity<DeviceLaunchService.Progress> launchProgress(Authentication auth,@PathVariable UUID id) {
+        limit("launch-status:"+auth.getName(),120);
+        return response(launches.progress(auth,id));
+    }
+    @PostMapping("/api/v1/companion/connect")
+    public ResponseEntity<DeviceService.Token> connect(@Valid @RequestBody WebClaim request,HttpServletRequest servlet,
+            @RequestHeader(value="Authorization",required=false) String authorization) {
+        // Native transport only. A browser must never receive a device credential, even if it knows the launch ticket.
+        if(servlet.getHeader("Origin")!=null || servlet.getHeader("Sec-Fetch-Site")!=null)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        limit("connect-ip:"+servlet.getRemoteAddr(),120);
+        limit("connect:"+DeviceService.hash(request.launchSecret()),30);
+        return response(launches.claim(request.launchSecret(),request.clientSecret(),authorization));
+    }
 
     @PostMapping("/api/v1/device-pairings/browser/details")
     public ResponseEntity<DeviceService.BrowserPairing> details(Authentication auth,@Valid @RequestBody BrowserApproval request) {
@@ -39,7 +66,7 @@ public class DeviceController {
     @PostMapping("/api/v1/device-pairings")
     public ResponseEntity<DeviceService.Pairing> start(@Valid @RequestBody Start request, HttpServletRequest servlet) {
         limit("start:" + servlet.getRemoteAddr(), 5);
-        return response(devices.start(request.name(), request.scope() == null ? DeviceService.SCOPE : request.scope()));
+        return response(devices.start(request.scope() == null ? DeviceService.SCOPE : request.scope()));
     }
     @PostMapping("/api/v1/device-pairings/approve")
     public ResponseEntity<Void> approve(Authentication auth, @Valid @RequestBody Approval request) {
@@ -61,6 +88,11 @@ public class DeviceController {
     @DeleteMapping("/api/v1/devices/{id}")
     public ResponseEntity<Void> revoke(Authentication auth, @PathVariable UUID id) {
         devices.revoke(auth, id);
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+    }
+    @DeleteMapping("/api/v1/devices/{id}/record")
+    public ResponseEntity<Void> removeInactive(Authentication auth, @PathVariable UUID id) {
+        devices.removeInactive(auth, id);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
     @GetMapping("/api/v1/companion/status")

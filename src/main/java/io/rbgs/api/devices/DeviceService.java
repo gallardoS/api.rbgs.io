@@ -25,24 +25,24 @@ public class DeviceService {
     public static final String CAPTURE_SCOPE = "companion:status companion:assignments evidence:write";
 
     public record Pairing(String code, String pollingSecret, Instant expiresAt, int intervalSeconds, String approvalSecret) {}
-    public record Device(UUID id, String name, Instant createdAt, Instant expiresAt, Instant revokedAt, String scope, Instant lastSeenAt, boolean connected) {}
-    public record BrowserPairing(String name, String scope, Instant expiresAt, String status, UUID deviceId, String accountName) {}
+    public record Device(UUID id, Instant createdAt, Instant expiresAt, Instant revokedAt, String scope, Instant lastSeenAt, boolean connected) {}
+    public record BrowserPairing(String scope, Instant expiresAt, String status, UUID deviceId, String accountName) {}
     public record Token(String status, String token, UUID deviceId, Instant expiresAt, String scope) {}
     public record Status(UUID deviceId, UUID accountId, String scope) {}
 
     @Transactional
-    public Pairing start(String name) {
-        return start(name, SCOPE);
+    public Pairing start() {
+        return start(SCOPE);
     }
     @Transactional
-    public Pairing start(String name, String scope) {
+    public Pairing start(String scope) {
         if (!SCOPE.equals(scope) && !CAPTURE_SCOPE.equals(scope)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported device scope");
         String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         StringBuilder code = new StringBuilder();
         for (int i = 0; i < 10; i++) code.append(alphabet.charAt(RANDOM.nextInt(alphabet.length())));
         String polling = secret();
         String approval = secret();
-        PairingEntity entity = new PairingEntity(hash(code.toString()), hash(polling), name.strip(), Instant.now(), scope);
+        PairingEntity entity = new PairingEntity(hash(code.toString()), hash(polling), Instant.now(), scope);
         entity.browserApproval(hash(approval)); pairings.save(entity);
         return new Pairing(code.toString(), polling, entity.getExpiresAt(), 5, approval);
     }
@@ -74,7 +74,7 @@ public class DeviceService {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Explicit capture permission approval is required");
             pairing.approve(account);
         }
-        return new BrowserPairing(pairing.getName(),pairing.getRequestedScope(),pairing.getExpiresAt(),
+        return new BrowserPairing(pairing.getRequestedScope(),pairing.getExpiresAt(),
                 pairing.getDeviceId()!=null?"PAIRED":pairing.getAccountId()!=null?"APPROVED":"PENDING",pairing.getDeviceId(),identities.currentUser(auth).displayName());
     }
 
@@ -89,7 +89,7 @@ public class DeviceService {
         if (devices.countByAccountIdAndRevokedAtIsNullAndExpiresAtAfter(account.getId(), now) >= 5)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Revoke an existing device before pairing another");
         String token = secret();
-        DeviceEntity device = devices.save(new DeviceEntity(account.getId(), pairing.getName(), hash(token), now, pairing.getRequestedScope()));
+        DeviceEntity device = devices.save(new DeviceEntity(account.getId(), hash(token), now, pairing.getRequestedScope()));
         pairing.consume(now);
         pairing.issuedDevice(device.getId());
         return new Token("PAIRED", token, device.getId(), device.getExpiresAt(), device.getGrantedScope());
@@ -97,15 +97,26 @@ public class DeviceService {
 
     @Transactional(readOnly = true)
     public List<Device> list(Authentication authentication) {
-        return devices.findByAccountIdOrderByCreatedAtDesc(currentAccount(authentication)).stream().map(DeviceService::view).toList();
+        return devices.findActiveByAccountId(currentAccount(authentication), Instant.now()).stream().map(DeviceService::view).toList();
     }
 
     @Transactional
     public void revoke(Authentication authentication, UUID id) {
         UUID accountId = currentAccount(authentication);
-        DeviceEntity device = devices.findById(id).filter(d -> d.getAccountId().equals(accountId))
+        DeviceEntity device = devices.lockById(id).filter(d -> d.getAccountId().equals(accountId))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         device.revoke(Instant.now());
+    }
+
+    @Transactional
+    public void removeInactive(Authentication authentication, UUID id) {
+        UUID accountId = currentAccount(authentication);
+        DeviceEntity device = devices.lockById(id).filter(d -> d.getAccountId().equals(accountId))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        Instant now = Instant.now();
+        if (device.getRevokedAt() == null && now.isBefore(device.getExpiresAt()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Revoke access before removing this device");
+        device.removeFromListing(now);
     }
 
     @Transactional(readOnly = true)
@@ -135,7 +146,7 @@ public class DeviceService {
         return status;
     }
 
-    private UUID currentAccount(Authentication authentication) {
+    UUID currentAccount(Authentication authentication) {
         var profile = identities.currentUser(authentication);
         if (profile == null) throw unauthorized();
         var account = accounts.findById(profile.id()).orElseThrow(DeviceService::unauthorized);
@@ -146,10 +157,10 @@ public class DeviceService {
         if (pairing.getConsumedAt() != null || !Instant.now().isBefore(pairing.getExpiresAt())) throw unavailable();
     }
     private static Device view(DeviceEntity d) { Instant now=Instant.now();boolean connected=d.getRevokedAt()==null && now.isBefore(d.getExpiresAt()) && d.getLastSeenAt()!=null && !d.getLastSeenAt().isAfter(now) && d.getLastSeenAt().isAfter(now.minusSeconds(45));
-        return new Device(d.getId(), d.getName(), d.getCreatedAt(), d.getExpiresAt(), d.getRevokedAt(), d.getGrantedScope(),d.getLastSeenAt(),connected); }
+        return new Device(d.getId(), d.getCreatedAt(), d.getExpiresAt(), d.getRevokedAt(), d.getGrantedScope(),d.getLastSeenAt(),connected); }
     private static ResponseStatusException unavailable() { return new ResponseStatusException(HttpStatus.GONE, "Pairing unavailable; create a new code"); }
     private static ResponseStatusException unauthorized() { return new ResponseStatusException(HttpStatus.UNAUTHORIZED); }
-    private static String secret() { byte[] bytes = new byte[32]; RANDOM.nextBytes(bytes); return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes); }
+    static String secret() { byte[] bytes = new byte[32]; RANDOM.nextBytes(bytes); return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes); }
     static String hash(String value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
         catch (NoSuchAlgorithmException error) { throw new IllegalStateException(error); }

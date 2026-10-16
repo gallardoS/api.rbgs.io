@@ -42,7 +42,7 @@ class DevicePairingTests {
         db.update("DELETE FROM rbgs.accounts WHERE id = ?", account.id());
     }
     DeviceService.Pairing start() {
-        var p = service.start("Fixture PC");
+        var p = service.start();
         pairingIds.add(db.queryForObject("SELECT id FROM rbgs.device_pairings WHERE polling_hash = ?", UUID.class, DeviceService.hash(p.pollingSecret())));
         return p;
     }
@@ -73,7 +73,7 @@ class DevicePairingTests {
         mvc.perform(get("/api/v1/companion/status").header("Authorization", "Bearer " + token.token()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.accountId").value(account.id().toString()));
         mvc.perform(get("/api/v1/devices/me").with(oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subject))))
-                .andExpect(status().isOk()).andExpect(jsonPath("$[0].token").doesNotExist())
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].token").doesNotExist()).andExpect(jsonPath("$[0].name").doesNotExist())
                 .andExpect(header().string("Cache-Control", "no-store"));
     }
 
@@ -95,14 +95,14 @@ class DevicePairingTests {
         mvc.perform(post("/api/v1/device-pairings/browser/approve").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).contentType("application/json").content("{\"approvalSecret\":\""+p.approvalSecret()+"\"}"))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/device-pairings/browser/approve").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()).contentType("application/json").content("{\"approvalSecret\":\""+p.approvalSecret()+"\"}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.accountName").value("DeviceFixture")).andExpect(jsonPath("$.token").doesNotExist()).andExpect(header().string("Cache-Control","no-store"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.accountName").value("DeviceFixture")).andExpect(jsonPath("$.name").doesNotExist()).andExpect(jsonPath("$.token").doesNotExist()).andExpect(header().string("Cache-Control","no-store"));
         assertThrows(ResponseStatusException.class,()->service.browserPairing(auth(),p.approvalSecret(),true,false));
         var token=service.exchange(p.pollingSecret());var view=service.browserPairing(auth(),p.approvalSecret(),false,false);
         assertEquals("PAIRED",view.status());assertEquals(token.deviceId(),view.deviceId());
         assertFalse(service.list(auth()).getFirst().connected());
     }
     @Test void browserApprovalCannotBypassConsentExpiryOrAccountBinding() {
-        var p=service.start("Capture fixture",DeviceService.CAPTURE_SCOPE);pairingIds.add(db.queryForObject("SELECT id FROM rbgs.device_pairings WHERE polling_hash=?",UUID.class,DeviceService.hash(p.pollingSecret())));
+        var p=service.start(DeviceService.CAPTURE_SCOPE);pairingIds.add(db.queryForObject("SELECT id FROM rbgs.device_pairings WHERE polling_hash=?",UUID.class,DeviceService.hash(p.pollingSecret())));
         assertEquals(403,assertThrows(ResponseStatusException.class,()->service.browserPairing(auth(),p.approvalSecret(),true,false)).getStatusCode().value());
         service.browserPairing(auth(),p.approvalSecret(),true,true);
         String ownSubject=subject;subject=UUID.randomUUID().toString();var other=accounts.upsert(ISSUER,subject,"OtherFixture");
@@ -119,7 +119,7 @@ class DevicePairingTests {
         assertTrue(service.list(auth()).getFirst().connected());
         db.update("UPDATE rbgs.devices SET last_seen_at=? WHERE id=?",java.sql.Timestamp.from(Instant.now().minusSeconds(46)),token.deviceId());assertFalse(service.list(auth()).getFirst().connected());
         db.update("UPDATE rbgs.devices SET last_seen_at=? WHERE id=?",java.sql.Timestamp.from(Instant.now().plusSeconds(60)),token.deviceId());assertFalse(service.list(auth()).getFirst().connected());
-        service.heartbeat(bearer);service.revoke(auth(),token.deviceId());assertFalse(service.list(auth()).getFirst().connected());
+        service.heartbeat(bearer);service.revoke(auth(),token.deviceId());assertTrue(service.list(auth()).isEmpty());
         mvc.perform(post("/api/v1/companion/heartbeat").header("Authorization",bearer)).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/device-pairings/browser/details").header("Authorization",bearer).contentType("application/json").content("{\"approvalSecret\":\""+"a".repeat(43)+"\"}")).andExpect(status().isForbidden());
     }
@@ -179,7 +179,7 @@ class DevicePairingTests {
         String ip = "192.0.2." + (10 + new Random().nextInt(200));
         for (int i = 0; i < 5; i++) {
             var result = mvc.perform(post("/api/v1/device-pairings").with(r -> { r.setRemoteAddr(ip); return r; })
-                    .contentType("application/json").content("{\"name\":\"RateFixture\"}"))
+                    .contentType("application/json").content(i==0?"{\"name\":\"Legacy ignored label\"}":"{}"))
                     .andExpect(status().isOk()).andReturn();
             // Remove only this test's public creations, including ones not associated to an account.
             String body = result.getResponse().getContentAsString();
@@ -187,10 +187,72 @@ class DevicePairingTests {
             pairingIds.add(db.queryForObject("SELECT id FROM rbgs.device_pairings WHERE polling_hash = ?", UUID.class, DeviceService.hash(secret)));
         }
         mvc.perform(post("/api/v1/device-pairings").with(r -> { r.setRemoteAddr(ip); return r; })
-                .contentType("application/json").content("{\"name\":\"RateFixture\"}"))
+                .contentType("application/json").content("{}"))
                 .andExpect(status().isTooManyRequests());
         mvc.perform(post("/api/v1/device-pairings/token").contentType("application/json").content("{\"pollingSecret\":\"short\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test void listingAutomaticallyExcludesRevokedAndExpiredDevicesAndKeepsTheirHistory() throws Exception {
+        var valid=paired();var revoked=paired();var expired=paired();
+        service.revoke(auth(),revoked.deviceId());
+        db.update("UPDATE rbgs.devices SET expires_at=? WHERE id=?",java.sql.Timestamp.from(Instant.now().minusSeconds(1)),expired.deviceId());
+        // A valid offline companion is still a linked device and remains revocable.
+        assertFalse(service.list(auth()).getFirst().connected());
+        mvc.perform(get("/api/v1/devices/me").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(valid.deviceId().toString()));
+        service.revoke(auth(),valid.deviceId());
+        assertTrue(service.list(auth()).isEmpty());
+        assertEquals(3,db.queryForObject("SELECT COUNT(*) FROM rbgs.devices WHERE account_id=?",Integer.class,account.id()));
+        assertEquals(3,db.queryForObject("SELECT COUNT(*) FROM rbgs.devices WHERE account_id=? AND removed_at IS NULL",Integer.class,account.id()));
+        assertEquals(401,assertThrows(ResponseStatusException.class,()->service.status("Bearer "+expired.token())).getStatusCode().value());
+    }
+
+    @Test void revokedDeviceCanBeRemovedFromListingWithoutDeletingItsCredentialHistory() {
+        var token=paired();service.revoke(auth(),token.deviceId());
+        service.removeInactive(auth(),token.deviceId());
+        service.removeInactive(auth(),token.deviceId());
+        assertTrue(service.list(auth()).isEmpty());
+        assertNotNull(db.queryForObject("SELECT removed_at FROM rbgs.devices WHERE id=?",java.sql.Timestamp.class,token.deviceId()));
+        assertEquals(DeviceService.hash(token.token()),db.queryForObject("SELECT token_hash FROM rbgs.devices WHERE id=?",String.class,token.deviceId()));
+        assertEquals(401,assertThrows(ResponseStatusException.class,()->service.status("Bearer "+token.token())).getStatusCode().value());
+    }
+
+    @Test void expiredDeviceCanBeRemovedWithoutRevokingFirst() throws Exception {
+        var token=paired();
+        db.update("UPDATE rbgs.devices SET expires_at=? WHERE id=?",java.sql.Timestamp.from(Instant.now().minusSeconds(1)),token.deviceId());
+        mvc.perform(delete("/api/v1/devices/"+token.deviceId()+"/record").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()))
+                .andExpect(status().isNoContent()).andExpect(header().string("Cache-Control","no-store"));
+        assertTrue(service.list(auth()).isEmpty());
+        assertNull(db.queryForObject("SELECT revoked_at FROM rbgs.devices WHERE id=?",java.sql.Timestamp.class,token.deviceId()));
+    }
+
+    @Test void removalRejectsAnActiveDeviceEvenWhenItHasNoRecentHeartbeat() throws Exception {
+        var token=paired();
+        assertFalse(service.list(auth()).getFirst().connected());
+        mvc.perform(delete("/api/v1/devices/"+token.deviceId()+"/record").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()))
+                .andExpect(status().isConflict());
+        service.heartbeat("Bearer "+token.token());
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->service.removeInactive(auth(),token.deviceId())).getStatusCode().value());
+        assertEquals(token.deviceId(),service.list(auth()).getFirst().id());
+        assertNotNull(service.status("Bearer "+token.token()));
+    }
+
+    @Test void removalRequiresWebAuthenticationCsrfAndOwnership() throws Exception {
+        var token=paired();service.revoke(auth(),token.deviceId());String path="/api/v1/devices/"+token.deviceId()+"/record";
+        mvc.perform(delete(path).with(csrf()).header("Authorization","Bearer "+token.token())).andExpect(status().isUnauthorized());
+        mvc.perform(delete(path).with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject)))).andExpect(status().isForbidden());
+        String otherSubject=UUID.randomUUID().toString();var other=accounts.upsert(ISSUER,otherSubject,"OtherRemovalFixture");
+        try {
+            mvc.perform(delete(path).with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(otherSubject))).with(csrf())).andExpect(status().isNotFound());
+            assertNull(db.queryForObject("SELECT removed_at FROM rbgs.devices WHERE id=?",java.sql.Timestamp.class,token.deviceId()));
+        } finally {db.update("DELETE FROM rbgs.accounts WHERE id=?",other.id());}
+        mvc.perform(delete("/api/v1/devices/"+UUID.randomUUID()+"/record").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()))
+                .andExpect(status().isNotFound());
+        mvc.perform(delete(path).with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf())).andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/devices/me").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
     }
 
     @Test void deviceLimitCanBeRecoveredByRevokingAnOwnedDevice() {
@@ -199,6 +261,7 @@ class DevicePairingTests {
         assertEquals(409, assertThrows(ResponseStatusException.class, () -> service.exchange(sixth.pollingSecret())).getStatusCode().value());
         service.revoke(auth(), service.list(auth()).getFirst().id());
         assertEquals("PAIRED", service.exchange(sixth.pollingSecret()).status());
-        assertEquals(6, service.list(auth()).size());
+        assertEquals(5, service.list(auth()).size());
+        assertEquals(6,db.queryForObject("SELECT COUNT(*) FROM rbgs.devices WHERE account_id=?",Integer.class,account.id()));
     }
 }

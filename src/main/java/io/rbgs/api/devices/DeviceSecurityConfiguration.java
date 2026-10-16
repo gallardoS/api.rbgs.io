@@ -14,7 +14,7 @@ public class DeviceSecurityConfiguration {
     SecurityFilterChain deviceTransport(HttpSecurity http) throws Exception {
         // These exact routes never authenticate with cookies. Approval and revocation use the web chain.
         http.securityMatcher("/api/v1/device-pairings", "/api/v1/device-pairings/token", "/api/v1/companion/status", "/api/v1/companion/heartbeat",
-                "/api/v1/companion/assignments", "/api/v1/companion/assignments/**", "/api/v1/evidence", "/api/v1/evidence/receipts/**")
+                "/api/v1/companion/connect", "/api/v1/companion/assignments", "/api/v1/companion/assignments/**", "/api/v1/evidence", "/api/v1/evidence/receipts/**")
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .csrf(AbstractHttpConfigurer::disable)
             .requestCache(AbstractHttpConfigurer::disable)
