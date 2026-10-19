@@ -56,6 +56,15 @@ class DevicePairingTests {
         var p = start(); service.approve(auth(), p.code()); return service.exchange(p.pollingSecret());
     }
 
+    @Test void statusUsesCurrentDisplayNameForTheCredentialOwner() throws Exception {
+        var token = paired();
+        accounts.upsert(ISSUER, subject, "UpdatedBattleTag#1234");
+        mvc.perform(get("/api/v1/companion/status").header("Authorization", "Bearer " + token.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountId").value(account.id().toString()))
+                .andExpect(jsonPath("$.accountName").value("UpdatedBattleTag#1234"));
+    }
+
     @Test void pairingRequiresApprovalThenIssuesOneScopedHashedCredential() throws Exception {
         var p = start();
         assertEquals("PENDING", service.exchange(p.pollingSecret()).status());
@@ -71,7 +80,7 @@ class DevicePairingTests {
         assertThrows(ResponseStatusException.class, () -> service.exchange(p.pollingSecret()));
         assertThrows(ResponseStatusException.class, () -> service.approve(auth(), p.code()));
         mvc.perform(get("/api/v1/companion/status").header("Authorization", "Bearer " + token.token()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.accountId").value(account.id().toString()));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.accountId").value(account.id().toString())).andExpect(jsonPath("$.accountName").value("DeviceFixture"));
         mvc.perform(get("/api/v1/devices/me").with(oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subject))))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].token").doesNotExist()).andExpect(jsonPath("$[0].name").doesNotExist())
                 .andExpect(header().string("Cache-Control", "no-store"));

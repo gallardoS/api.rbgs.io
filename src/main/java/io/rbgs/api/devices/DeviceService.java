@@ -28,7 +28,8 @@ public class DeviceService {
     public record Device(UUID id, Instant createdAt, Instant expiresAt, Instant revokedAt, String scope, Instant lastSeenAt, boolean connected) {}
     public record BrowserPairing(String scope, Instant expiresAt, String status, UUID deviceId, String accountName) {}
     public record Token(String status, String token, UUID deviceId, Instant expiresAt, String scope) {}
-    public record Status(UUID deviceId, UUID accountId, String scope) {}
+    public record Status(UUID deviceId, UUID accountId, String scope, String accountName) {}
+    private record AuthorizedDevice(DeviceEntity device, String accountName) {}
 
     @Transactional
     public Pairing start() {
@@ -129,22 +130,24 @@ public class DeviceService {
 
     @Transactional(readOnly = true)
     public Status status(String authorization) {
-        DeviceEntity device = authorizedDevice(authorization);
-        return new Status(device.getId(), device.getAccountId(), device.getGrantedScope());
+        var authorized = authorizedDevice(authorization);
+        var device = authorized.device();
+        return new Status(device.getId(), device.getAccountId(), device.getGrantedScope(), authorized.accountName());
     }
     @Transactional
     public Status heartbeat(String authorization) {
-        DeviceEntity device = authorizedDevice(authorization);
+        var authorized = authorizedDevice(authorization);
+        var device = authorized.device();
         device.heartbeat(Instant.now());
-        return new Status(device.getId(),device.getAccountId(),device.getGrantedScope());
+        return new Status(device.getId(),device.getAccountId(),device.getGrantedScope(),authorized.accountName());
     }
-    private DeviceEntity authorizedDevice(String authorization) {
+    private AuthorizedDevice authorizedDevice(String authorization) {
         if (authorization == null || !authorization.matches("Bearer [A-Za-z0-9_-]{43}")) throw unauthorized();
         DeviceEntity device = devices.findByTokenHash(hash(authorization.substring(7))).orElseThrow(DeviceService::unauthorized);
         if (device.getRevokedAt() != null || !Instant.now().isBefore(device.getExpiresAt())) throw unauthorized();
         var account = accounts.findById(device.getAccountId()).orElseThrow(DeviceService::unauthorized);
         if (!"ACTIVE".equals(account.getStatus())) throw unauthorized();
-        return device;
+        return new AuthorizedDevice(device, account.getDisplayName());
     }
     @Transactional(readOnly = true)
     public Status authorize(String authorization, String scope) {

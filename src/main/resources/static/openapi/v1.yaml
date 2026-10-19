@@ -105,7 +105,7 @@ paths:
       description: Stateless device bearer authorization; web cookies cannot substitute it. Both existing status-only and capture-scoped active devices can send. Uses server receipt time; no client timestamp, game state or ownership claim. Twelve requests per device per minute. Native schedule is approximately 15 seconds. Web connected status expires 45 seconds after the latest signal and is immediately false for revoked/expired devices. Ordinary GET status does not record presence.
       security: [{ deviceCredential: [] }]
       responses:
-        '200': { description: 'Authorized deviceId, accountId and current scope; no-store' }
+        '200': { description: 'Authorized deviceId, accountId, current scope and accountName; no-store' }
         '401': { description: 'Missing, invalid, revoked or expired device or inactive account' }
         '429': { description: 'Retry-After 60 seconds' }
   /device-pairings/browser/details:
@@ -441,10 +441,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [deviceId, accountId, scope]
+                required: [deviceId, accountId, scope, accountName]
                 properties:
                   deviceId: { type: string, format: uuid }
                   accountId: { type: string, format: uuid }
+                  accountName: { type: string, maxLength: 100, description: "Current display name of the authenticated Battle.net account; display only, not an identity key." }
                   scope: { type: string, enum: ['companion:status', 'companion:status companion:assignments evidence:write'] }
         '401': { description: "Missing, invalid, expired or revoked device credential or inactive account" }
   /play/context:
