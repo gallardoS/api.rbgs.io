@@ -11,6 +11,6 @@ public class DeviceErrors {
         var response = ResponseEntity.status(error.getStatusCode()).cacheControl(CacheControl.noStore());
         if (error.getStatusCode().value() == 429) response.header("Retry-After", "60");
         return response.body(ProblemDetail.forStatusAndDetail(error.getStatusCode(),
-                error.getReason() == null ? "Device access unavailable" : error.getReason()));
+                error.getReason() == null ? "This companion request cannot be completed" : error.getReason()));
     }
 }

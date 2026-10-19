@@ -37,7 +37,7 @@ public class DeviceService {
     }
     @Transactional
     public Pairing start(String scope) {
-        if (!SCOPE.equals(scope) && !CAPTURE_SCOPE.equals(scope)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported device scope");
+        if (!SCOPE.equals(scope) && !CAPTURE_SCOPE.equals(scope)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "These companion permissions are not supported. Check that the companion is up to date.");
         String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         StringBuilder code = new StringBuilder();
         for (int i = 0; i < 10; i++) code.append(alphabet.charAt(RANDOM.nextInt(alphabet.length())));
@@ -59,7 +59,7 @@ public class DeviceService {
         requirePending(pairing);
         if (pairing.getAccountId() != null) throw unavailable();
         if (CAPTURE_SCOPE.equals(pairing.getRequestedScope()) && !acceptCapturePermissions)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Explicit capture permission approval is required");
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Allow this PC to load your matches and upload their data before connecting");
         pairing.approve(accountId);
     }
 
@@ -72,7 +72,7 @@ public class DeviceService {
             requirePending(pairing);
             if (pairing.getAccountId()!=null) throw unavailable();
             if (CAPTURE_SCOPE.equals(pairing.getRequestedScope()) && !captureConsent)
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Explicit capture permission approval is required");
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Allow this PC to load your matches and upload their data before connecting");
             pairing.approve(account);
         }
         return new BrowserPairing(pairing.getRequestedScope(),pairing.getExpiresAt(),
@@ -88,7 +88,7 @@ public class DeviceService {
         if (!"ACTIVE".equals(account.getStatus())) throw unavailable();
         Instant now = Instant.now();
         if (devices.countByAccountIdAndRevokedAtIsNullAndExpiresAtAfter(account.getId(), now) >= 5)
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Revoke an existing device before pairing another");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Disconnect one of your approved PCs in Settings before connecting another");
         String token = secret();
         DeviceEntity device = devices.save(new DeviceEntity(account.getId(), hash(token), now, pairing.getRequestedScope()));
         pairing.consume(now);
@@ -105,7 +105,7 @@ public class DeviceService {
     public void requireLinkedDevice(UUID accountId, UUID deviceId) {
         DeviceEntity device = deviceId == null ? null : devices.findByIdAndAccountId(deviceId, accountId).orElse(null);
         if (device == null || device.getRevokedAt() != null || !Instant.now().isBefore(device.getExpiresAt())) {
-            throw new ResponseStatusException(HttpStatus.PRECONDITION_FAILED, "A valid linked companion is required");
+            throw new ResponseStatusException(HttpStatus.PRECONDITION_FAILED, "Connect the companion to this account in Settings before continuing");
         }
     }
 
@@ -124,7 +124,7 @@ public class DeviceService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         Instant now = Instant.now();
         if (device.getRevokedAt() == null && now.isBefore(device.getExpiresAt()))
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Revoke access before removing this device");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Disconnect this PC before removing it");
         device.removeFromListing(now);
     }
 
@@ -153,7 +153,7 @@ public class DeviceService {
     public Status authorize(String authorization, String scope) {
         Status status = status(authorization);
         if (!Arrays.asList(status.scope().split(" ")).contains(scope))
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Pair this device again with capture permissions");
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Reconnect the companion and allow match uploads");
         return status;
     }
 
@@ -169,7 +169,7 @@ public class DeviceService {
     }
     private static Device view(DeviceEntity d) { Instant now=Instant.now();boolean connected=d.getRevokedAt()==null && now.isBefore(d.getExpiresAt()) && d.getLastSeenAt()!=null && !d.getLastSeenAt().isAfter(now) && d.getLastSeenAt().isAfter(now.minusSeconds(45));
         return new Device(d.getId(), d.getCreatedAt(), d.getExpiresAt(), d.getRevokedAt(), d.getGrantedScope(),d.getLastSeenAt(),connected); }
-    private static ResponseStatusException unavailable() { return new ResponseStatusException(HttpStatus.GONE, "Pairing unavailable; create a new code"); }
+    private static ResponseStatusException unavailable() { return new ResponseStatusException(HttpStatus.GONE, "This connection request is no longer available. Start a new connection in the companion."); }
     private static ResponseStatusException unauthorized() { return new ResponseStatusException(HttpStatus.UNAUTHORIZED); }
     static String secret() { byte[] bytes = new byte[32]; RANDOM.nextBytes(bytes); return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes); }
     static String hash(String value) {

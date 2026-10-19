@@ -35,7 +35,7 @@ public class CaptureController {
     public ResponseEntity<CaptureService.Receipt> recover(@RequestHeader(value="Authorization",required=false)String authorization,@PathVariable UUID assignmentId,@PathVariable UUID captureId,@PathVariable int revision){var reporter=devices.authorize(authorization,"evidence:write");limit("read:"+reporter.accountId(),120);return response(captures.recover(reporter.accountId(),assignmentId,captureId,revision));}
     private Map<String,Object> body(HttpServletRequest request)throws IOException {
         if(request.getContentType()==null||!MediaType.APPLICATION_JSON.isCompatibleWith(MediaType.parseMediaType(request.getContentType())))throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
-        byte[] bytes=request.getInputStream().readNBytes(CaptureJson.MAX_BYTES+1);if(bytes.length>CaptureJson.MAX_BYTES)throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"Capture request exceeds 256 KiB");return json.parse(bytes);}
+        byte[] bytes=request.getInputStream().readNBytes(CaptureJson.MAX_BYTES+1);if(bytes.length>CaptureJson.MAX_BYTES)throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"Match data is too large to upload (over 256 KiB)");return json.parse(bytes);}
     private void limit(String key,int maximum){if(limits.get(key,k->new AtomicInteger()).incrementAndGet()>maximum)throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,"Retry in one minute");}
     private static <T>ResponseEntity<T> response(T value){return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(value);}
 }

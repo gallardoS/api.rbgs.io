@@ -32,7 +32,7 @@ public class CaptureService {
     public CaptureService(JdbcTemplate db,CaptureJson json,AccountService accounts,AccountRepository accountRepository,CaptureTestRepository tests,CaptureAssignmentRepository assignments,@Value("${rbgs.capture.controlled-enabled:false}") boolean enabled){this.db=db;this.json=json;this.accounts=accounts;this.accountRepository=accountRepository;this.tests=tests;this.assignments=assignments;this.enabled=enabled;}
     public record Receipt(int schemaVersion,UUID evidenceId,UUID assignmentId,UUID captureId,int captureRevision,
                           Instant receivedAt,boolean durablyStored,String processingStatus,String contentSha256) {}
-    private void enabled(){if(!enabled)throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Controlled capture testing is disabled");}
+    private void enabled(){if(!enabled)throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Test matches are currently unavailable");}
     private UUID moderator(Authentication auth) {
         var account = accounts.currentUser(auth);
         if (account == null || !"MODERATOR".equals(account.role())) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
@@ -128,9 +128,9 @@ public class CaptureService {
         enabled();
         var assignment = owned(account, capture, true);
         var test = assignment.getTestMatch();
-        if (test.getTestKind() == CaptureTestKind.CAPTURE_ONLY && !captureOnlySupported) throw new ResponseStatusException(HttpStatus.CONFLICT, "Update the companion to support individual capture tests before issuing a code");
-        if (assignment.getCodeHash() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Code already issued. A lost issuance requires a fresh controlled assignment.");
-        if (test.getCancelledAt() != null || !Instant.now().isBefore(test.getArmUntil())) throw new ResponseStatusException(HttpStatus.GONE, "Assignment is no longer available for arming");
+        if (test.getTestKind() == CaptureTestKind.CAPTURE_ONLY && !captureOnlySupported) throw new ResponseStatusException(HttpStatus.CONFLICT, "Update the companion before getting a command for this test match");
+        if (assignment.getCodeHash() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "The match command was already created. If you no longer have it, request a new test match.");
+        if (test.getCancelledAt() != null || !Instant.now().isBefore(test.getArmUntil())) throw new ResponseStatusException(HttpStatus.GONE, "This test match is no longer available. Request a new one.");
         String alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         StringBuilder code = new StringBuilder();
         for (int i = 0; i < 16; i++) code.append(alphabet.charAt(RANDOM.nextInt(32)));
@@ -143,7 +143,7 @@ public class CaptureService {
         enabled();
         var a = owned(account, capture, false);
         var test = a.getTestMatch();
-        if (a.getCodeHash() == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Assignment code has not been issued");
+        if (a.getCodeHash() == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Get your match command in the companion first");
         var result = new LinkedHashMap<String,Object>();
         result.put("schemaVersion", 2); result.put("matchId", test.getId()); result.put("assignmentId", a.getId()); result.put("captureId", a.getCaptureId());
         result.put("assignmentCodeSha256", a.getCodeHash()); result.put("mode", "CONTROLLED_TEST"); result.put("issuedAt", a.getIssuedAt()); result.put("armUntil", test.getArmUntil());
@@ -158,11 +158,11 @@ public class CaptureService {
     @Transactional
     public Receipt ingest(DeviceService.Status reporter,Map<String,Object> request) {
         enabled();json.evidence(request);UUID capture=uuid(request.get("captureId"));var a=owned(reporter.accountId(),capture,true);
-        if(!uuid(request.get("assignmentId")).equals(a.getId())||!uuid(request.get("matchId")).equals(a.getTestMatch().getId()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Assignment binding mismatch");
-        String codeHash=sha(text(request.get("assignmentCode")).getBytes(StandardCharsets.UTF_8));if(!codeHash.equals(a.getCodeHash()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Assignment correlator mismatch");
+        if(!uuid(request.get("assignmentId")).equals(a.getId())||!uuid(request.get("matchId")).equals(a.getTestMatch().getId()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This saved data does not belong to the assigned match");
+        String codeHash=sha(text(request.get("assignmentCode")).getBytes(StandardCharsets.UTF_8));if(!codeHash.equals(a.getCodeHash()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"The command in this saved data does not match the assigned match");
         int revision=(int)number(request.get("captureRevision"));String contentHash=sha(json.canonical(request));
         var previous=db.queryForList("SELECT * FROM rbgs.capture_evidence WHERE account_id=? AND assignment_id=? AND capture_id=? AND revision=?",reporter.accountId(),a.getId(),capture,revision);
-        if(!previous.isEmpty()){if(!contentHash.equals(previous.getFirst().get("content_sha256")))throw new ResponseStatusException(HttpStatus.CONFLICT,"Content changed under the same capture revision");return receipt(previous.getFirst());}
+        if(!previous.isEmpty()){if(!contentHash.equals(previous.getFirst().get("content_sha256")))throw new ResponseStatusException(HttpStatus.CONFLICT,"Different data was already uploaded for this saved version. Your earlier upload has been kept.");return receipt(previous.getFirst());}
         // Never store plaintext correlators server-side. Preserve all observations
         // unchanged in a redacted immutable report, with both submitted/stored hashes.
         var redacted=new LinkedHashMap<>(request);redacted.remove("assignmentCode");redacted.put("assignmentCodeSha256",codeHash);String stored=json.encode(redacted);
@@ -179,7 +179,7 @@ public class CaptureService {
     }
     private static Receipt receipt(Map<String,Object> row){return new Receipt(2,(UUID)row.get("id"),(UUID)row.get("assignment_id"),(UUID)row.get("capture_id"),((Number)row.get("revision")).intValue(),instant(row,"received_at"),true,(String)row.get("processing_status"),(String)row.get("content_sha256"));}
     private static Instant instant(Map<String,Object> row,String key){return ((Timestamp)row.get(key)).toInstant();}
-    private static ResponseStatusException notFound(){return new ResponseStatusException(HttpStatus.NOT_FOUND,"Own capture assignment or receipt not found");}
+    private static ResponseStatusException notFound(){return new ResponseStatusException(HttpStatus.NOT_FOUND,"No assigned match or upload confirmation was found for this account");}
     @Scheduled(fixedDelayString="${rbgs.capture.processing-delay-ms:2000}", initialDelayString="${rbgs.capture.processing-delay-ms:2000}")
     @Transactional
     public void processPending() {

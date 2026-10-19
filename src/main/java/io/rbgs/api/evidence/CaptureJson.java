@@ -23,7 +23,7 @@ public class CaptureJson {
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
 
     public Map<String,Object> parse(byte[] bytes) {
-        if (bytes.length > MAX_BYTES) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Evidence exceeds 256 KiB");
+        if (bytes.length > MAX_BYTES) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Match data is too large to upload (over 256 KiB)");
         try {
             Object value=json.readValue(bytes,Object.class);
             if (!(value instanceof Map<?,?>)) throw invalid();
@@ -35,7 +35,7 @@ public class CaptureJson {
     public byte[] canonical(Object value) {
         StringBuilder out=new StringBuilder();write(value,out,0);
         byte[] bytes=out.toString().getBytes(StandardCharsets.UTF_8);
-        if(bytes.length>MAX_BYTES) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Evidence exceeds 256 KiB");
+        if(bytes.length>MAX_BYTES) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Match data is too large to upload (over 256 KiB)");
         return bytes;
     }
     private void write(Object value,StringBuilder out,int depth) {
@@ -102,5 +102,5 @@ public class CaptureJson {
     public static List<?> rows(Object value,int min,int max){if(!(value instanceof List<?> list)||list.size()<min||list.size()>max)throw invalid();return list;}
     public static void identity(Object value){var identity=object(value);fields(identity,"name realm","guid");text(identity.get("name"));for(String key:List.of("realm","guid"))if(identity.get(key)!=null)text(identity.get(key));}
     public static String sha(byte[] bytes){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));}catch(NoSuchAlgorithmException error){throw new IllegalStateException(error);}}
-    public static ResponseStatusException invalid(){return new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT,"Invalid or unsupported capture format");}
+    public static ResponseStatusException invalid(){return new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT,"Cannot read this match data. Check that your addons and companion are up to date.");}
 }

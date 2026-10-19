@@ -24,7 +24,7 @@ public class DeviceLaunchService {
 
     @Transactional
     public Launch start(Authentication auth, boolean captureConsent) {
-        if (!captureConsent) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Explicit capture permission approval is required");
+        if (!captureConsent) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Allow this PC to load your matches and upload their data before connecting");
         UUID account=connections.currentAccount(auth);
         String secret=DeviceService.secret();
         var launch=launches.save(new DeviceLaunchEntity(account,DeviceService.hash(secret),Instant.now()));
@@ -68,7 +68,7 @@ public class DeviceLaunchService {
             device.grantCapturePermissions();
         } else {
             if (devices.countByAccountIdAndRevokedAtIsNullAndExpiresAtAfter(account.getId(),Instant.now())>=5)
-                throw new ResponseStatusException(HttpStatus.CONFLICT,"Revoke an existing device before pairing another");
+                throw new ResponseStatusException(HttpStatus.CONFLICT,"Disconnect one of your approved PCs in Settings before connecting another");
             device=devices.save(new DeviceEntity(account.getId(),DeviceService.hash(credential(secret,clientSecret)),Instant.now(),DeviceService.CAPTURE_SCOPE));
         }
         launch.claim(claimHash,device.getId(),authorization==null);
@@ -87,5 +87,5 @@ public class DeviceLaunchService {
         if(d.getRevokedAt()!=null || !Instant.now().isBefore(d.getExpiresAt())) throw gone();
     }
     private static void requireLive(DeviceLaunchEntity l) { if(!Instant.now().isBefore(l.getExpiresAt())) throw gone(); }
-    private static ResponseStatusException gone() { return new ResponseStatusException(HttpStatus.GONE,"Connection request unavailable; open the companion again from the website"); }
+    private static ResponseStatusException gone() { return new ResponseStatusException(HttpStatus.GONE,"This connection request is no longer available. Open the companion again from rbgs.io."); }
 }
