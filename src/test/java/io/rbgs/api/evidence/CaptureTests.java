@@ -36,6 +36,16 @@ class CaptureTests {
  @Test void companion_wire_is_accepted_without_rewriting_observations()throws Exception {
   byte[] bytes=getClass().getResourceAsStream("/capture/evidence-wire.sanitized.json").readAllBytes();var request=json.parse(bytes);json.evidence(request);assertArrayEquals(bytes,json.canonical(request));
  }
+ @Test void future_patch_metadata_is_persisted_idempotently_and_still_goes_to_review()throws Exception {
+  UUID capture=create();var payload=payload(capture,service.issue(owner.id(),capture));var client=CaptureJson.object(payload.get("client"));
+  client.put("gameVersion","1.61.0");client.put("gameBuild","100001");client.put("interface",16100);client.put("adapterVersion","darkspear-scoreboard-v1");
+  var reporter=devices.authorize("Bearer "+token(true).token(),"evidence:write");var receipt=service.ingest(reporter,payload);
+  assertTrue(receipt.durablyStored());assertEquals(receipt.evidenceId(),service.ingest(reporter,payload).evidenceId());
+  String stored=db.queryForObject("SELECT redacted_payload FROM rbgs.capture_evidence WHERE id=?",String.class,receipt.evidenceId());
+  var storedClient=CaptureJson.object(json.parse(stored.getBytes(StandardCharsets.UTF_8)).get("client"));assertEquals("100001",storedClient.get("gameBuild"));assertEquals("1.61.0",storedClient.get("gameVersion"));assertEquals(16100L,CaptureJson.number(storedClient.get("interface")));
+  service.processPending();assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,receipt.captureRevision()).processingStatus());
+  client.put("gameBuild","100002");assertEquals(409,assertThrows(ResponseStatusException.class,()->service.ingest(reporter,payload)).getStatusCode().value());
+ }
  UUID create(){var match=service.create(auth(),request());UUID id=(UUID)match.get("matchId");matches.add(id);return (UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");}
  Map<String,Object> captureOnlyRequest(){var result=new LinkedHashMap<String,Object>(request());var own=new LinkedHashMap<>(CaptureJson.object(((List<?>)result.get("roster")).getFirst()));
   own.put("teamKey",null);result.put("roster",List.of(own));result.put("testKind","CAPTURE_ONLY");return result;}

@@ -59,8 +59,11 @@ public class CaptureJson {
         Map<String,Object> client=object(root.get("client"));
         fields(client,"addonVersion adapterVersion product gameVersion gameBuild interface companionVersion","");
         for(String key:List.of("addonVersion","adapterVersion","product","gameVersion","gameBuild","companionVersion"))text(client.get(key));
-        if(!"wow_classic_beta".equals(client.get("product"))||!"1.60.1".equals(client.get("gameVersion"))||!"70338".equals(client.get("gameBuild"))
-                ||number(client.get("interface"))!=16001||!"darkspear-70338-test-1".equals(client.get("adapterVersion")))throw invalid();
+        if(!"wow_classic_beta".equals(client.get("product"))
+                ||!text(client.get("gameVersion")).matches("[0-9]+(?:\\.[0-9]+)*")||text(client.get("gameVersion")).length()>32
+                ||!text(client.get("gameBuild")).matches("[0-9]{1,10}")||!text(client.get("gameBuild")).matches(".*[1-9].*")
+                ||number(client.get("interface"))==0
+                ||!Set.of("darkspear-scoreboard-v1","darkspear-70338-test-1").contains(client.get("adapterVersion")))throw invalid();
         identity(root.get("observedCharacter"));
         Map<String,Object> c=object(root.get("capture"));fields(c,"state stage continuity incompleteReason map startedAt endedAt roster outcome","");
         String state=text(c.get("state")),stage=text(c.get("stage")),continuity=text(c.get("continuity"));
