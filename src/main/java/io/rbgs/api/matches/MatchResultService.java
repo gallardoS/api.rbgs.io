@@ -7,6 +7,8 @@ import io.rbgs.api.identity.AccountRepository;
 import io.rbgs.api.identity.AccountService;
 import java.time.*;
 import java.util.*;
+import java.nio.charset.StandardCharsets;
+import org.springframework.data.domain.PageRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.http.HttpStatus;
@@ -33,11 +35,58 @@ public class MatchResultService {
             String winningTeam, int reportsA, int reportsB, int requiredPerTeam, Instant deadline,
             long version, String policyVersion, boolean ratingApplied) {}
 
+    public record DeclaredPlayer(String name, String realm, String team) {}
+    public record Summary(UUID matchId, MatchMode mode, MatchEvidencePolicy evidencePolicy, String profile,
+            Instant createdAt, Instant captureStartDeadline, Instant cancelledAt, List<DeclaredPlayer> roster,
+            Result result, boolean canCancel) {}
+    public record Listing(List<Summary> items, String nextCursor) {}
+
     private void moderator(Authentication auth) {
         var account = accounts.currentUser(auth);
         if (account == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         if (accountRepository.findById(account.id()).filter(a -> "ACTIVE".equals(a.getStatus()) && "MODERATOR".equals(a.getRole())).isEmpty())
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    }
+
+    @Transactional(readOnly = true)
+    public Listing list(Authentication auth, String status, int limit, String cursor) {
+        moderator(auth);
+        if (!Set.of("ALL", "PENDING", "VERIFIED", "REVIEW", "CANCELLED").contains(status) || limit < 1 || limit > 50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid match filter or page size");
+        var page = PageRequest.of(0, limit + 1);
+        List<MatchEntity> rows;
+        if (cursor == null) rows = matches.listModeration(status, availability.controlledEnabled(), page);
+        else {
+            Instant before;
+            UUID beforeId;
+            try {
+                if (cursor.length() > 256) throw new IllegalArgumentException();
+                String[] parts = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8).split("\\n", -1);
+                if (parts.length != 2) throw new IllegalArgumentException();
+                before = Instant.parse(parts[0]);
+                beforeId = CaptureJson.uuid(parts[1]);
+            } catch (RuntimeException invalid) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid match cursor");
+            }
+            rows = matches.listModerationBefore(status, availability.controlledEnabled(), before, beforeId, page);
+        }
+        boolean more = rows.size() > limit;
+        var visible = rows.subList(0, Math.min(rows.size(), limit));
+        String next = null;
+        if (more) {
+            var last = visible.getLast();
+            next = Base64.getUrlEncoder().withoutPadding().encodeToString((last.getCreatedAt() + "\n" + last.getId()).getBytes(StandardCharsets.UTF_8));
+        }
+        var summaries = visible.stream().map(m -> {
+            var roster = verification.expectedRoster(m).stream().map(row -> {
+                var character = CaptureJson.object(row.get("character"));
+                return new DeclaredPlayer((String)character.get("name"), (String)character.get("realm"), (String)row.get("assignedTeamKey"));
+            }).toList();
+            return new Summary(m.getId(), m.getMode(), m.getEvidencePolicy(), m.getProfile(), m.getCreatedAt(),
+                    m.getCaptureStartDeadline(), m.getCancelledAt(), roster, view(m),
+                    m.getMode() == MatchMode.CONTROLLED_TEST && m.getCancelledAt() == null && availability.controlledEnabled());
+        }).toList();
+        return new Listing(summaries, next);
     }
 
     @Transactional(readOnly = true)

@@ -11,6 +11,7 @@ import io.rbgs.api.evidence.*;
 import io.rbgs.api.identity.*;
 import java.time.*;
 import java.util.*;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,6 +37,7 @@ class SharedMatchDomainTests {
     @Autowired AccountService accounts;
     @Autowired DeviceService devices;
     @Autowired MockMvc mvc;
+    @Autowired EntityManager em;
     final List<Account> players = new ArrayList<>();
     final List<String> subjects = new ArrayList<>();
     static final String ISSUER = "https://shared-match.example";
@@ -125,6 +127,13 @@ class SharedMatchDomainTests {
         assertEquals("INSUFFICIENT_REPORTS", ordinary.getVerificationReason());
         assertEquals(1, captures.list(players.getFirst().id()).size());
         assertEquals(503, assertThrows(ResponseStatusException.class, () -> results.result(auth(0), testMatch.getId())).getStatusCode().value());
+        em.flush();
+        em.createNativeQuery("UPDATE rbgs.accounts SET account_role='MODERATOR' WHERE id=?1")
+                .setParameter(1, players.getFirst().id()).executeUpdate();
+        em.clear();
+        var listing = results.list(auth(0), "ALL", 50, null);
+        assertTrue(listing.items().stream().anyMatch(m -> m.matchId().equals(ordinary.getId())));
+        assertTrue(listing.items().stream().noneMatch(m -> m.mode() == MatchMode.CONTROLLED_TEST));
     }
 
     @Test void unknown_profile_can_be_persisted_but_cannot_produce_a_verified_result() {

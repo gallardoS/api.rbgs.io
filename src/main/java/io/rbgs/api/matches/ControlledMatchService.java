@@ -94,11 +94,19 @@ public class ControlledMatchService {
     }
     @Transactional
     public void cancel(Authentication auth, UUID id) {
+        cancel(auth, id, null);
+    }
+
+    @Transactional
+    public void cancel(Authentication auth, UUID id, Long expectedVersion) {
         enabled();
         moderator(auth);
         var match = matches.lockById(id).filter(m -> m.getMode() == MatchMode.CONTROLLED_TEST)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (expectedVersion != null && expectedVersion < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         if (match.getCancelledAt() != null) return;
+        if (expectedVersion != null && expectedVersion != match.getResultVersion())
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This match changed. Refresh it before cancelling.");
         match.cancel(Instant.now());
         results.evaluate(match, Instant.now());
     }

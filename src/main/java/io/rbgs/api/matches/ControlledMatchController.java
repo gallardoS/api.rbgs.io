@@ -33,8 +33,8 @@ public class ControlledMatchController {
     }
 
     @PostMapping("/api/v1/moderation/capture-tests/{id}/cancel")
-    public ResponseEntity<Void> cancel(Authentication auth, @PathVariable UUID id) {
-        controlled.cancel(auth, id);
+    public ResponseEntity<Void> cancel(Authentication auth, @PathVariable UUID id, @RequestParam(required = false) Long expectedVersion) {
+        controlled.cancel(auth, id, expectedVersion);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 }

@@ -234,6 +234,25 @@ paths:
         '200': { description: 'Approved request without device credential; no-store' }
         '403': { description: 'Web session, CSRF or explicit capture consent missing' }
         '410': { description: 'Unknown, expired or already approved request' }
+  /moderation/matches:
+    get:
+      operationId: listModerationMatches
+      summary: List persisted matches for an active moderator
+      description: No-store. Uses current persisted account status and role. Newest first by createdAt and UUID descending, with opaque keyset pagination. Disabled controlled tests are omitted; other match modes remain visible. Summary includes declared players and usable independent reports per team, without raw reports, account IDs, assignment codes or credentials. CANCELLED is a display filter over cancelledAt; other state filters exclude cancelled matches. canCancel is true only for available controlled tests that have not been cancelled. Reading establishes the CSRF cookie for subsequent moderator commands.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [ALL, PENDING, REVIEW, VERIFIED, CANCELLED], default: ALL } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { in: query, name: cursor, schema: { type: string, maxLength: 256 }, description: 'Use nextCursor from the previous page with the same filter' }
+      responses:
+        '200':
+          description: A bounded page of persisted match summaries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModerationMatchPage' }
+        '400': { description: 'Invalid state, size or cursor' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Current active moderator required' }
   /moderation/capture-tests:
     post:
       operationId: createControlledCaptureTest
@@ -294,14 +313,17 @@ paths:
   /moderation/capture-tests/{id}/cancel:
     post:
       operationId: cancelControlledCaptureTest
-      description: Requires current active moderator and CSRF. Only CONTROLLED_TEST matches can be cancelled. Cancellation is idempotent and retains original reports and prior result audit.
+      description: Requires current active moderator and CSRF. Only CONTROLLED_TEST matches can be cancelled. Optional expectedVersion rejects stale state with 409. An already-cancelled test returns 204 idempotently, including a repeated request with an older version. Original reports and prior result audit remain stored. Legacy callers may omit the version.
       security: [{ webSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: expectedVersion, schema: { type: integer, format: int64, minimum: 0 } }
       responses:
         '204': { description: "Cancelled; committed evidence retained" }
+        '400': { description: 'Invalid expected version' }
         '403': { description: "Active moderator and CSRF required" }
         '404': { description: "Test not found" }
+        '409': { description: 'Match changed; refresh before cancelling' }
         '503': { description: "Controlled testing disabled" }
   /companion/assignments:
     get:
@@ -973,6 +995,39 @@ components:
         name: { type: string, minLength: 1, maxLength: 128 }
         realm: { type: [string, 'null'], minLength: 1, maxLength: 128 }
         guid: { type: [string, 'null'], minLength: 1, maxLength: 128 }
+    ModerationMatchPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ModerationMatchSummary' } }
+        nextCursor: { type: [string, 'null'], maxLength: 256 }
+    ModerationMatchSummary:
+      type: object
+      additionalProperties: false
+      required: [matchId, mode, evidencePolicy, profile, createdAt, captureStartDeadline, cancelledAt, roster, result, canCancel]
+      properties:
+        matchId: { type: string, format: uuid }
+        mode: { type: string, enum: [CONTROLLED_TEST, MATCHMADE] }
+        evidencePolicy: { type: string, enum: [FULL_ROSTER, CAPTURE_ONLY] }
+        profile: { type: string }
+        createdAt: { type: string, format: date-time }
+        captureStartDeadline: { type: string, format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
+        roster:
+          type: array
+          minItems: 1
+          maxItems: 40
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, realm, team]
+            properties:
+              name: { type: string, maxLength: 128 }
+              realm: { type: [string, 'null'], maxLength: 128 }
+              team: { type: [string, 'null'], enum: [A, B, null] }
+        result: { $ref: '#/components/schemas/MatchResult' }
+        canCancel: { type: boolean }
     MatchResult:
       type: object
       additionalProperties: false

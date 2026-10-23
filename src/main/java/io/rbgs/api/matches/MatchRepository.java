@@ -7,8 +7,20 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
 
 public interface MatchRepository extends JpaRepository<MatchEntity, UUID> {
+    String MODERATION_FILTER = " from MatchEntity m where (m.mode <> io.rbgs.api.matches.MatchMode.CONTROLLED_TEST or :controlledEnabled = true) "
+            + "and (:status = 'ALL' or (:status = 'CANCELLED' and m.cancelledAt is not null) "
+            + "or (m.cancelledAt is null and m.verificationStatus = :status)) ";
+
+    @Query("select m" + MODERATION_FILTER + "order by m.createdAt desc, m.id desc")
+    List<MatchEntity> listModeration(@Param("status") String status, @Param("controlledEnabled") boolean controlledEnabled, Pageable page);
+
+    @Query("select m" + MODERATION_FILTER + "and (m.createdAt < :before or (m.createdAt = :before and m.id < :beforeId)) order by m.createdAt desc, m.id desc")
+    List<MatchEntity> listModerationBefore(@Param("status") String status, @Param("controlledEnabled") boolean controlledEnabled,
+            @Param("before") Instant before, @Param("beforeId") UUID beforeId, Pageable page);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select m from MatchEntity m where m.id = :id")
     Optional<MatchEntity> lockById(@Param("id") UUID id);
