@@ -6,6 +6,101 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /auth/bruno/requests:
+    post:
+      operationId: startBrunoLogin
+      x-spring-profiles: [local]
+      summary: Start a five-minute Bruno login handoff
+      security: []
+      description: Native transport only; rejects Origin and Sec-Fetch-Site. Returns approvalPath with browser-only
+        secret in fragment, distinct pollingSecret, expiresIn=300 and intervalSeconds=5. Five starts per IP per minute.
+        In-memory on one instance; restarting invalidates pending requests. Browser approval is explicit and the server
+        retains the Battle.net authorized client.
+      responses:
+        '200':
+          description: approvalPath, pollingSecret, expiresIn, intervalSeconds; no-store
+        '403':
+          description: Browser transport forbidden
+        '429':
+          description: Rate limited
+  /auth/bruno:
+    get:
+      operationId: brunoApprovalPage
+      x-spring-profiles: [local]
+      security: []
+      responses:
+        '200':
+          description: Uncached HTML page; reads approval secret from URL fragment and asks explicit approval after
+            web login
+  /auth/bruno/login:
+    get:
+      operationId: loginForBruno
+      x-spring-profiles: [local]
+      security: []
+      responses:
+        '302':
+          description: Start normal Battle.net OAuth and return to the fixed approval page
+  /auth/bruno/approve:
+    post:
+      operationId: approveBrunoLogin
+      x-spring-profiles: [local]
+      security:
+      - webSession: []
+      description: Requires active account and CSRF. Browser-only approval secret. Approval is single-use, does not
+        extend expiry, and does not disclose any credential.
+      responses:
+        '204':
+          description: Approved
+        '401':
+          description: Web session or Battle.net authorized client missing
+        '403':
+          description: Account inactive or invalid CSRF
+        '410':
+          description: Expired, unknown or already approved
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - secret
+              properties:
+                secret:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{43}$
+  /auth/bruno/token:
+    post:
+      operationId: exchangeBrunoLogin
+      x-spring-profiles: [local]
+      security: []
+      description: Native polling secret only. Rejects Origin/Sec-Fetch-Site and existing sessions. Send without Cookie.
+        PENDING until explicit browser approval. PAIRED creates an independent web session and transfers the authorized
+        client server-side, returning sessionId and csrfToken, never a Battle.net token. Active account is rechecked.
+        Single-use; lost successful response requires a new login. No-store. 120 polls per IP per minute.
+      responses:
+        '200':
+          description: status PENDING with null credentials, or PAIRED with sessionId and csrfToken
+        '403':
+          description: Browser transport or inactive account
+        '409':
+          description: Existing session cookie must be omitted
+        '410':
+          description: Expired, unknown or consumed
+        '429':
+          description: Rate limited
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - secret
+              properties:
+                secret:
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]{43}$
   /device-launches:
     post:
       operationId: authorizeCompanionLaunch
@@ -143,7 +238,7 @@ paths:
     post:
       operationId: createControlledCaptureTest
       summary: Create an individual capture or a controlled Darkspear roster test
-      description: Requires an active persisted MODERATOR web account, CSRF, and RBGS_CONTROLLED_CAPTURE_ENABLED. Declared identities are unverified. No ranked match or rating is created. CAPTURE_ONLY permits exactly the authenticated moderator account and its declared character with teamKey null; no expected opponent/team is asserted. ROSTER_CONTROLLED (the default) requires at least one active reporter and both assigned teams. All reports remain REVIEW-only. Ten requests per moderator per minute.
+      description: Requires an active persisted MODERATOR web account, CSRF, and RBGS_CONTROLLED_CAPTURE_ENABLED. Declared identities are unverified. No ranked match or rating is created. CAPTURE_ONLY permits exactly the authenticated moderator account and its declared character with teamKey null; no expected opponent/team is asserted. ROSTER_CONTROLLED (the default) requires at least one active reporter and both assigned teams. Full names must be unique after NFC normalization, trimming and case folding. Controlled roster results can be verified with six concordant accounts per team and no essential contradictions. CAPTURE_ONLY remains unverifiable. Ten requests per moderator per minute.
       security: [{ webSession: [] }]
       requestBody:
         required: true
@@ -199,6 +294,7 @@ paths:
   /moderation/capture-tests/{id}/cancel:
     post:
       operationId: cancelControlledCaptureTest
+      description: Requires current active moderator and CSRF. Only CONTROLLED_TEST matches can be cancelled. Cancellation is idempotent and retains original reports and prior result audit.
       security: [{ webSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
@@ -210,12 +306,117 @@ paths:
   /companion/assignments:
     get:
       operationId: listOwnCaptureAssignments
-      description: Native bearer with companion:assignments; web cookies are ignored. At most 50 own assignments, newest first, with character, testKind, armUntil, codeIssued and cancelled. No codes or other accounts. No-store; 120 reads per account per minute.
+      description: Native bearer with companion:assignments; web cookies are ignored. At most 50 own assignments, newest first, with character, armUntil, codeIssued and cancelled. Controlled assignments retain their existing testKind field. When controlled testing is disabled, controlled assignments are omitted; other match assignments remain available. No codes or other accounts. No-store; 120 reads per account per minute.
       security: [{ deviceCredential: [] }]
       responses:
         '200': { description: "Own controlled assignment summaries" }
         '401': { description: "Missing, expired or revoked device" }
         '403': { description: "Re-pair with explicit capture permissions" }
+        '503': { description: "Controlled testing disabled" }
+  /matches/{id}/result:
+    get:
+      operationId: getMatchResult
+      summary: Read a match result as a participant or active moderator
+      description: No-store. Returns only result, independent reporting coverage and server deadline, without raw reports or account identities. PENDING awaits reports; VERIFIED requires six accounts from each assigned team; REVIEW has no canonical outcome. Exact roster, full observed identity, bijective team mapping, known map, plausible timing and all historical report revisions are compared. Optional statistics are retained per report and never selected as canonical. The deadline is 15 minutes after the first usable final report; without a usable final report the test expires four hours and 15 minutes after armUntil. Incomplete captures do not start the final-report timer. Match mode records CONTROLLED_TEST or MATCHMADE independently of the evidence policy. The test feature flag only gates CONTROLLED_TEST matches. MATCHMADE is an internal model foundation; no matchmaking creation endpoint or ranked activation is provided. A result is not Blizzard ownership or a rating movement.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Persisted result; background processing can update this snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchResult' }
+        '401': { description: "Web login required" }
+        '403': { description: "Inactive account" }
+        '404': { description: "No visible test" }
+        '503': { description: "Controlled testing disabled" }
+  /moderation/matches/{id}/verification:
+    get:
+      operationId: inspectMatchVerification
+      summary: Inspect assigned roster, report validation, normalized facts and result audit history
+      description: Requires a current active MODERATOR web account. No-store. Each private report includes evidenceId, accountId, revision, receivedAt, validation, reason, normalizedFacts (JSON string or null) and redactedPayload (JSON string). Codes remain hashed. Events preserve prior verification and late-review transitions with immutable evidence IDs and policy version. No decision or rating mutation is performed by this route.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Private verification details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result, expectedRoster, reports, events]
+                properties:
+                  result: { $ref: '#/components/schemas/MatchResult' }
+                  expectedRoster: { type: array, items: { type: object } }
+                  reports: { type: array, items: { type: object } }
+                  events: { type: array, items: { type: object } }
+        '401': { description: "Web login required" }
+        '403': { description: "Active moderator required" }
+        '404': { description: "No test" }
+        '503': { description: "Controlled testing disabled" }
+  /capture-tests/{id}/result:
+    get:
+      deprecated: true
+      operationId: getCaptureTestResult
+      summary: Compatibility alias for GET /matches/{id}/result
+      description: No-store. Returns only result, independent reporting coverage and server deadline, without raw reports or account identities. PENDING awaits reports; VERIFIED requires six accounts from each assigned team; REVIEW has no canonical outcome. Exact roster, full observed identity, bijective team mapping, known map, plausible timing and all historical report revisions are compared. Optional statistics are retained per report and never selected as canonical. The deadline is 15 minutes after the first usable final report; without a usable final report the test expires four hours and 15 minutes after armUntil. Incomplete captures do not start the final-report timer. This is a non-ranked controlled result, not Blizzard ownership or a rating movement.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Persisted result; background processing can update this snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchResult' }
+        '401': { description: "Web login required" }
+        '403': { description: "Inactive account" }
+        '404': { description: "No visible test" }
+        '503': { description: "Controlled testing disabled" }
+  /moderation/capture-tests/{id}/verification:
+    get:
+      deprecated: true
+      operationId: inspectCaptureVerification
+      summary: Compatibility alias for GET /moderation/matches/{id}/verification
+      description: Requires a current active MODERATOR web account. No-store. Each private report includes evidenceId, accountId, revision, receivedAt, validation, reason, normalizedFacts (JSON string or null) and redactedPayload (JSON string). Codes remain hashed. Events preserve prior verification and late-review transitions with immutable evidence IDs and policy version. No decision or rating mutation is performed by this route.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Private verification details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result, expectedRoster, reports, events]
+                properties:
+                  result: { $ref: '#/components/schemas/MatchResult' }
+                  expectedRoster: { type: array, items: { type: object } }
+                  reports: { type: array, items: { type: object } }
+                  events: { type: array, items: { type: object } }
+        '401': { description: "Web login required" }
+        '403': { description: "Active moderator required" }
+        '404': { description: "No test" }
+        '503': { description: "Controlled testing disabled" }
+  /companion/assignments/{captureId}/result:
+    get:
+      operationId: getOwnCaptureTestResult
+      description: Requires companion:assignments. Own account-bound controlled result, no-store. Ignores web cookies. Does not expose private reports or replace durable receipt recovery. At most 120 assignment/receipt reads per account per minute.
+      security: [{ deviceCredential: [] }]
+      parameters:
+        - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Own controlled test result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchResult' }
+        '401': { description: "Missing, expired or revoked device" }
+        '403': { description: "Capture permissions required" }
+        '404': { description: "No own assignment" }
         '503': { description: "Controlled testing disabled" }
   /companion/assignments/{captureId}:
     get:
@@ -244,7 +445,7 @@ paths:
   /evidence:
     post:
       operationId: storeCaptureEvidence
-      description: Native bearer evidence:write only; no web cookie authorization. Strict schema 2, at most 256 KiB, 40 score rows, depth 30, duplicate JSON keys rejected. Root requires schemaVersion, matchId, assignmentId, captureId, captureRevision, assignmentCode, client, observedCharacter, capture. Only wow_classic_beta with the darkspear-scoreboard-v1 adapter or its legacy darkspear-70338-test-1 identifier is accepted. Game version, build and positive interface are retained as bounded metadata rather than patch allowlists; the supported map and data shape remain enforced. Nullable Lua members must become explicit JSON null. Canonical UTF-8 uses sorted object keys, ordered arrays and nonnegative safe integers. Identity/stats remain observations. Idempotency key is account/assignment/capture/revision; different canonical content returns 409. Evidence and processing job commit before receipt. Stored report replaces plaintext assignmentCode with assignmentCodeSha256, preserving other members; submitted/stored hashes are separate. Every controlled report enters REVIEW, never VERIFIED or rating. Late/cancelled reports are retained for review. Sixty writes per account per minute.
+      description: Native bearer evidence:write only; no web cookie authorization. Strict schema 2, at most 256 KiB, 40 score rows, depth 30, duplicate JSON keys rejected. Root requires schemaVersion, matchId, assignmentId, captureId, captureRevision, assignmentCode, client, observedCharacter, capture. Only wow_classic_beta with the darkspear-scoreboard-v1 adapter or its legacy darkspear-70338-test-1 identifier is accepted. Game version, build and positive interface are retained as bounded metadata rather than patch allowlists; the supported map and data shape remain enforced. Nullable Lua members must become explicit JSON null. Canonical UTF-8 uses sorted object keys, ordered arrays and nonnegative safe integers. Identity/stats remain observations. Idempotency key is account/assignment/capture/revision; different canonical content returns 409. Evidence and processing job commit before receipt. Stored report replaces plaintext assignmentCode with assignmentCodeSha256, preserving other members; submitted/stored hashes are separate. For compatibility the receipt processingStatus still advances from PENDING to REVIEW after processing; authoritative match verification is exposed separately by the result routes. Delayed uploads are evaluated against assignment and game timing, never upload expiry alone; cancelled reports remain review evidence. No rating is applied. Sixty writes per account per minute.
       security: [{ deviceCredential: [] }]
       requestBody:
         required: true
@@ -772,6 +973,28 @@ components:
         name: { type: string, minLength: 1, maxLength: 128 }
         realm: { type: [string, 'null'], minLength: 1, maxLength: 128 }
         guid: { type: [string, 'null'], minLength: 1, maxLength: 128 }
+    MatchResult:
+      type: object
+      additionalProperties: false
+      required: [matchId, mode, status, reason, outcome, winningTeam, reportsA, reportsB, requiredPerTeam, deadline, version, policyVersion, ratingApplied]
+      properties:
+        matchId: { type: string, format: uuid }
+        mode: { type: string, enum: [CONTROLLED_TEST, MATCHMADE] }
+        status: { type: string, enum: [PENDING, VERIFIED, REVIEW] }
+        reason: { type: [string, 'null'] }
+        outcome: { type: [string, 'null'], enum: [WIN, DRAW, null] }
+        winningTeam: { type: [string, 'null'], enum: [A, B, null] }
+        reportsA: { type: integer, minimum: 0, description: 'Distinct assigned accounts with valid observations, including conflicting votes when under review' }
+        reportsB: { type: integer, minimum: 0 }
+        requiredPerTeam: { type: integer, const: 6 }
+        deadline: { type: [string, 'null'], format: date-time }
+        version: { type: integer, format: int64, minimum: 0 }
+        policyVersion: { type: string, const: controlled-roster-v1 }
+        ratingApplied: { type: boolean, const: false }
+    CaptureTestResult:
+      deprecated: true
+      allOf:
+        - { $ref: '#/components/schemas/MatchResult' }
     CaptureReceipt:
       type: object
       additionalProperties: false

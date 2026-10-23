@@ -1,5 +1,7 @@
 package io.rbgs.api.evidence;
 
+import io.rbgs.api.matches.MatchResultService;
+
 import com.github.benmanes.caffeine.cache.*;
 import io.rbgs.api.devices.DeviceService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -9,7 +11,6 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
-import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -17,11 +18,10 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class CaptureController {
     private final CaptureService captures;private final CaptureJson json;private final DeviceService devices;
+    private final MatchResultService results;
     private final Cache<String,AtomicInteger> limits=Caffeine.newBuilder().maximumSize(10000).expireAfterWrite(Duration.ofMinutes(1)).build();
-    @PostMapping("/api/v1/moderation/capture-tests")
-    public ResponseEntity<?> create(Authentication auth,HttpServletRequest request)throws IOException {limit("create:"+auth.getName(),10);return response(captures.create(auth,body(request)));}
-    @PostMapping("/api/v1/moderation/capture-tests/{id}/cancel")
-    public ResponseEntity<Void> cancel(Authentication auth,@PathVariable UUID id){captures.cancel(auth,id);return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();}
+    @GetMapping("/api/v1/companion/assignments/{captureId}/result")
+    public ResponseEntity<?> ownResult(@RequestHeader(value="Authorization",required=false)String authorization,@PathVariable UUID captureId){var reporter=devices.authorize(authorization,"companion:assignments");limit("read:"+reporter.accountId(),120);return response(results.ownResult(reporter.accountId(),captureId));}
     @GetMapping("/api/v1/companion/assignments")
     public ResponseEntity<?> list(@RequestHeader(value="Authorization",required=false)String authorization){var reporter=devices.authorize(authorization,"companion:assignments");limit("read:"+reporter.accountId(),120);return response(captures.list(reporter.accountId()));}
     @GetMapping("/api/v1/companion/assignments/{captureId}")

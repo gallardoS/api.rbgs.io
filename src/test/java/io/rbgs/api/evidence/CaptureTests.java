@@ -1,5 +1,7 @@
 package io.rbgs.api.evidence;
 
+import io.rbgs.api.matches.*;
+
 import io.rbgs.api.devices.DeviceService;
 import io.rbgs.api.identity.*;
 import java.nio.charset.StandardCharsets;
@@ -24,11 +26,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties={"rbgs.capture.controlled-enabled=true","rbgs.capture.processing-delay-ms=3600000"})
 @AutoConfigureMockMvc
 class CaptureTests {
- @Autowired CaptureService service;@Autowired CaptureJson json;@Autowired DeviceService devices;@Autowired AccountService identities;@Autowired JdbcTemplate db;@Autowired MockMvc mvc;
+ @Autowired ControlledMatchService controlled;@Autowired MatchResultService results;@Autowired CaptureService service;@Autowired CaptureJson json;@Autowired DeviceService devices;@Autowired AccountService identities;@Autowired JdbcTemplate db;@Autowired MockMvc mvc;
  String subject;Account owner;List<UUID> matches;static final String ISSUER="https://idp.example";
  @BeforeEach void setup(){subject=UUID.randomUUID().toString();owner=identities.upsert(ISSUER,subject,"CaptureFixture");db.update("UPDATE rbgs.accounts SET account_role='MODERATOR' WHERE id=?",owner.id());matches=new ArrayList<>();}
- @AfterEach void cleanup(){for(UUID id:matches){db.update("DELETE FROM rbgs.capture_processing_jobs WHERE evidence_id IN (SELECT id FROM rbgs.capture_evidence WHERE assignment_id IN (SELECT id FROM rbgs.capture_assignments WHERE match_id=?))",id);
-  db.update("DELETE FROM rbgs.capture_evidence WHERE assignment_id IN (SELECT id FROM rbgs.capture_assignments WHERE match_id=?)",id);db.update("DELETE FROM rbgs.capture_assignments WHERE match_id=?",id);db.update("DELETE FROM rbgs.capture_test_matches WHERE id=?",id);}
+ @AfterEach void cleanup(){for(UUID id:matches){db.update("DELETE FROM rbgs.capture_processing_jobs WHERE evidence_id IN (SELECT id FROM rbgs.capture_evidence WHERE assignment_id IN (SELECT id FROM rbgs.match_assignments WHERE match_id=?))",id);
+  db.update("DELETE FROM rbgs.capture_evidence WHERE assignment_id IN (SELECT id FROM rbgs.match_assignments WHERE match_id=?)",id);db.update("DELETE FROM rbgs.match_assignments WHERE match_id=?",id);db.update("DELETE FROM rbgs.matches WHERE id=?",id);}
   db.update("DELETE FROM rbgs.device_pairings WHERE account_id=?",owner.id());db.update("DELETE FROM rbgs.devices WHERE account_id=?",owner.id());db.update("DELETE FROM rbgs.accounts WHERE id=?",owner.id());}
  OAuth2AuthenticationToken auth(){Instant now=Instant.now();var id=new OidcIdToken("fixture",now,now.plusSeconds(300),Map.of("iss",ISSUER,"sub",subject));var a=List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER"));return new OAuth2AuthenticationToken(new DefaultOidcUser(a,id),a,"battle-net");}
  Map<String,Object> request(){var own=new LinkedHashMap<String,Object>();own.put("accountId",owner.id().toString());own.put("character",Map.of("name","FixturePlayer","realm","FixtureRealm"));own.put("teamKey","A");
@@ -43,10 +45,10 @@ class CaptureTests {
   assertTrue(receipt.durablyStored());assertEquals(receipt.evidenceId(),service.ingest(reporter,payload).evidenceId());
   String stored=db.queryForObject("SELECT redacted_payload FROM rbgs.capture_evidence WHERE id=?",String.class,receipt.evidenceId());
   var storedClient=CaptureJson.object(json.parse(stored.getBytes(StandardCharsets.UTF_8)).get("client"));assertEquals("100001",storedClient.get("gameBuild"));assertEquals("1.61.0",storedClient.get("gameVersion"));assertEquals(16100L,CaptureJson.number(storedClient.get("interface")));
-  service.processPending();assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,receipt.captureRevision()).processingStatus());
+  results.processPending();assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,receipt.captureRevision()).processingStatus());
   client.put("gameBuild","100002");assertEquals(409,assertThrows(ResponseStatusException.class,()->service.ingest(reporter,payload)).getStatusCode().value());
  }
- UUID create(){var match=service.create(auth(),request());UUID id=(UUID)match.get("matchId");matches.add(id);return (UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");}
+ UUID create(){var match=controlled.create(auth(),request());UUID id=(UUID)match.get("matchId");matches.add(id);return (UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");}
  Map<String,Object> captureOnlyRequest(){var result=new LinkedHashMap<String,Object>(request());var own=new LinkedHashMap<>(CaptureJson.object(((List<?>)result.get("roster")).getFirst()));
   own.put("teamKey",null);result.put("roster",List.of(own));result.put("testKind","CAPTURE_ONLY");return result;}
  @Test void random_bg_capture_uses_one_own_reporter_no_declared_team_and_durable_review_only_receipts()throws Exception {
@@ -54,30 +56,30 @@ class CaptureTests {
    .andExpect(status().isOk()).andExpect(jsonPath("$.testKind").value("CAPTURE_ONLY")).andReturn();
   var created=json.parse(response.getResponse().getContentAsByteArray());UUID match=CaptureJson.uuid(created.get("matchId"));matches.add(match);
   UUID capture=CaptureJson.uuid(CaptureJson.object(((List<?>)created.get("assignments")).getFirst()).get("captureId"));
-  assertEquals("CAPTURE_ONLY",db.queryForObject("SELECT test_kind FROM rbgs.capture_test_matches WHERE id=?",String.class,match));
-  assertNull(db.queryForObject("SELECT assigned_team FROM rbgs.capture_assignments WHERE capture_id=?",String.class,capture));
+  assertEquals("CAPTURE_ONLY",db.queryForObject("SELECT evidence_policy FROM rbgs.matches WHERE id=?",String.class,match));
+  assertNull(db.queryForObject("SELECT assigned_team FROM rbgs.match_assignments WHERE capture_id=?",String.class,capture));
   assertEquals("CAPTURE_ONLY",service.list(owner.id()).getFirst().get("testKind"));assertTrue(service.list(UUID.randomUUID()).isEmpty());
   var issued=service.issue(owner.id(),capture,true);var descriptor=CaptureJson.object(issued.get("assignment"));assertEquals("CAPTURE_ONLY",descriptor.get("testKind"));assertNull(descriptor.get("assignedTeamKey"));
   var frozen=(List<?>)descriptor.get("expectedRoster");assertEquals(1,frozen.size());assertNull(CaptureJson.object(frozen.getFirst()).get("assignedTeamKey"));
   var reporter=devices.authorize("Bearer "+token(true).token(),"evidence:write");var payload=payload(capture,issued);var receipt=service.ingest(reporter,payload);
-  assertTrue(receipt.durablyStored());assertEquals(receipt.evidenceId(),service.ingest(reporter,payload).evidenceId());service.processPending();
+  assertTrue(receipt.durablyStored());assertEquals(receipt.evidenceId(),service.ingest(reporter,payload).evidenceId());results.processPending();
   assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,158).processingStatus());
   assertEquals("CAPTURE_ONLY_NO_EXPECTED_TEAMS",db.queryForObject("SELECT review_reason FROM rbgs.capture_evidence WHERE id=?",String.class,receipt.evidenceId()));
  }
  @Test void capture_only_rejects_other_accounts_declared_teams_extra_participants_and_unknown_kinds(){
   var request=captureOnlyRequest();var own=CaptureJson.object(((List<?>)request.get("roster")).getFirst());
-  own.put("accountId",UUID.randomUUID().toString());assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
-  own.put("accountId",owner.id().toString());own.put("teamKey","A");assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
-  own.put("teamKey",null);request.put("roster",List.of(own,own));assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
-  request.put("roster",List.of(own));request.put("testKind","UNKNOWN");assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
-  request.remove("testKind");assertEquals(422,assertThrows(ResponseStatusException.class,()->service.create(auth(),request)).getStatusCode().value());
-  assertEquals(0,db.queryForObject("SELECT COUNT(*) FROM rbgs.capture_test_matches WHERE created_by=?",Integer.class,owner.id()));
+  own.put("accountId",UUID.randomUUID().toString());assertEquals(422,assertThrows(ResponseStatusException.class,()->controlled.create(auth(),request)).getStatusCode().value());
+  own.put("accountId",owner.id().toString());own.put("teamKey","A");assertEquals(422,assertThrows(ResponseStatusException.class,()->controlled.create(auth(),request)).getStatusCode().value());
+  own.put("teamKey",null);request.put("roster",List.of(own,own));assertEquals(422,assertThrows(ResponseStatusException.class,()->controlled.create(auth(),request)).getStatusCode().value());
+  request.put("roster",List.of(own));request.put("testKind","UNKNOWN");assertEquals(422,assertThrows(ResponseStatusException.class,()->controlled.create(auth(),request)).getStatusCode().value());
+  request.remove("testKind");assertEquals(422,assertThrows(ResponseStatusException.class,()->controlled.create(auth(),request)).getStatusCode().value());
+  assertEquals(0,db.queryForObject("SELECT COUNT(*) FROM rbgs.matches WHERE created_by=?",Integer.class,owner.id()));
  }
  @Test void old_companion_cannot_consume_a_capture_only_code_before_upgrading()throws Exception {
-  var match=service.create(auth(),captureOnlyRequest());matches.add((UUID)match.get("matchId"));UUID capture=(UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");
+  var match=controlled.create(auth(),captureOnlyRequest());matches.add((UUID)match.get("matchId"));UUID capture=(UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");
   var token=token(true);String endpoint="/api/v1/companion/assignments/"+capture+"/issue";
   mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token())).andExpect(status().isConflict());
-  assertNull(db.queryForObject("SELECT code_hash FROM rbgs.capture_assignments WHERE capture_id=?",String.class,capture));
+  assertNull(db.queryForObject("SELECT code_hash FROM rbgs.match_assignments WHERE capture_id=?",String.class,capture));
   mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token()).header("X-RBGS-Capture-Test-Kinds","CAPTURE_ONLY"))
    .andExpect(status().isOk()).andExpect(jsonPath("$.assignment.testKind").value("CAPTURE_ONLY"));
  }
@@ -97,7 +99,7 @@ class CaptureTests {
   var token=token(true);mvc.perform(post("/api/v1/moderation/capture-tests").header("Authorization","Bearer "+token.token()).contentType("application/json").content(body)).andExpect(status().isForbidden());
  }
  @Test void issuance_is_owner_only_once_and_hash_only() {UUID capture=create();var issue=service.issue(owner.id(),capture);String code=(String)issue.get("assignmentCode");assertTrue(code.matches("[0-9A-HJKMNP-TV-Z]{16}"));
-  assertEquals(CaptureJson.sha(code.getBytes(StandardCharsets.UTF_8)),db.queryForObject("SELECT code_hash FROM rbgs.capture_assignments WHERE capture_id=?",String.class,capture));
+  assertEquals(CaptureJson.sha(code.getBytes(StandardCharsets.UTF_8)),db.queryForObject("SELECT code_hash FROM rbgs.match_assignments WHERE capture_id=?",String.class,capture));
   assertFalse(service.descriptor(owner.id(),capture).containsKey("assignmentCode"));assertEquals(409,assertThrows(ResponseStatusException.class,()->service.issue(owner.id(),capture)).getStatusCode().value());
   assertEquals(404,assertThrows(ResponseStatusException.class,()->service.descriptor(UUID.randomUUID(),capture)).getStatusCode().value());
  }
@@ -106,7 +108,7 @@ class CaptureTests {
   var first=service.ingest(reporter,payload);assertTrue(first.durablyStored());assertEquals(CaptureJson.sha(json.canonical(payload)),first.contentSha256());
   var recovered=service.recover(owner.id(),first.assignmentId(),capture,first.captureRevision());assertEquals(first.evidenceId(),recovered.evidenceId());assertEquals(first.receivedAt(),recovered.receivedAt());
   String stored=db.queryForObject("SELECT redacted_payload FROM rbgs.capture_evidence WHERE id=?",String.class,first.evidenceId());assertFalse(stored.contains((String)issued.get("assignmentCode")));assertTrue(stored.contains("assignmentCodeSha256"));
-  service.processPending();assertEquals("REVIEW",service.recover(owner.id(),first.assignmentId(),capture,first.captureRevision()).processingStatus());
+  results.processPending();assertEquals("REVIEW",service.recover(owner.id(),first.assignmentId(),capture,first.captureRevision()).processingStatus());
   var other=token(true);assertEquals(first.evidenceId(),service.ingest(devices.authorize("Bearer "+other.token(),"evidence:write"),payload).evidenceId());assertEquals(1,db.queryForObject("SELECT COUNT(*) FROM rbgs.capture_evidence WHERE capture_id=?",Integer.class,capture));
  }
  @Test void concurrent_submissions_commit_one_report_and_receipt()throws Exception {
@@ -130,8 +132,8 @@ class CaptureTests {
   devices.revoke(auth(),t.deviceId());mvc.perform(get("/api/v1/companion/assignments").header("Authorization","Bearer "+t.token())).andExpect(status().isUnauthorized());
  }
  @Test void late_or_cancelled_reports_remain_review_evidence_not_ranked_results()throws Exception {
-  UUID capture=create();var issued=service.issue(owner.id(),capture);service.cancel(auth(),(UUID)CaptureJson.object(issued.get("assignment")).get("matchId"));
-  var receipt=service.ingest(devices.authorize("Bearer "+token(true).token(),"evidence:write"),payload(capture,issued));service.processPending();
+  UUID capture=create();var issued=service.issue(owner.id(),capture);controlled.cancel(auth(),(UUID)CaptureJson.object(issued.get("assignment")).get("matchId"));
+  var receipt=service.ingest(devices.authorize("Bearer "+token(true).token(),"evidence:write"),payload(capture,issued));results.processPending();
   assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,158).processingStatus());assertEquals("ASSIGNMENT_CANCELLED",db.queryForObject("SELECT review_reason FROM rbgs.capture_evidence WHERE id=?",String.class,receipt.evidenceId()));
  }
  @Test void canonicalization_matches_native_golden_vector_and_rejects_invalid_shapes(){var value=json.parse("{\"z\":{\"x\":\"雪\",\"b\":1},\"a\":[null,\"é\",0]}".getBytes(StandardCharsets.UTF_8));assertEquals("3c0a12b024485c41eb2ca490f71a774d611cea485cb1babe8d4ea07e7361e10d",CaptureJson.sha(json.canonical(value)));

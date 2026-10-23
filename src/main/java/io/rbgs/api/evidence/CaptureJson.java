@@ -59,19 +59,20 @@ public class CaptureJson {
         Map<String,Object> client=object(root.get("client"));
         fields(client,"addonVersion adapterVersion product gameVersion gameBuild interface companionVersion","");
         for(String key:List.of("addonVersion","adapterVersion","product","gameVersion","gameBuild","companionVersion"))text(client.get(key));
-        if(!"wow_classic_beta".equals(client.get("product"))
+        if(!CaptureProfile.supports(client)
                 ||!text(client.get("gameVersion")).matches("[0-9]+(?:\\.[0-9]+)*")||text(client.get("gameVersion")).length()>32
                 ||!text(client.get("gameBuild")).matches("[0-9]{1,10}")||!text(client.get("gameBuild")).matches(".*[1-9].*")
-                ||number(client.get("interface"))==0
-                ||!Set.of("darkspear-scoreboard-v1","darkspear-70338-test-1").contains(client.get("adapterVersion")))throw invalid();
+                ||number(client.get("interface"))==0)throw invalid();
         identity(root.get("observedCharacter"));
         Map<String,Object> c=object(root.get("capture"));fields(c,"state stage continuity incompleteReason map startedAt endedAt roster outcome","");
         String state=text(c.get("state")),stage=text(c.get("stage")),continuity=text(c.get("continuity"));
         if(!Set.of("COMPLETE","INCOMPLETE").contains(state)||!Set.of("ARMED","RECORDING","FINAL_PENDING","COMPLETE","INCOMPLETE").contains(stage)
                 ||!Set.of("CONTINUOUS","UNKNOWN").contains(continuity))throw invalid();
         for(String key:List.of("startedAt","endedAt"))if(c.get(key)!=null)timestamp(c.get(key));
+        CaptureProfile profile = null;
         if(c.get("map")!=null){var map=object(c.get("map"));fields(map,"profile observedName gameMapId","");
-            if(!"DARKSPEAR_DIAGNOSTIC".equals(map.get("profile")))throw invalid();text(map.get("observedName"));if(map.get("gameMapId")!=null)number(map.get("gameMapId"));}
+            profile = CaptureProfile.find(text(map.get("profile"))).orElseThrow(CaptureJson::invalid);
+            if(!profile.accepts(client))throw invalid();text(map.get("observedName"));if(map.get("gameMapId")!=null)number(map.get("gameMapId"));}
         List<?> roster=rows(c.get("roster"),0,40);
         for(Object item:roster){var row=object(item);fields(row,"character observedTeamKey","killingBlows honorableKills deaths damage healing");identity(row.get("character"));
             if(row.get("observedTeamKey")!=null&&!Set.of("0","1").contains(text(row.get("observedTeamKey"))))throw invalid();
@@ -83,7 +84,7 @@ public class CaptureJson {
         if(state.equals("COMPLETE")) {
             if(!stage.equals("COMPLETE")||!continuity.equals("CONTINUOUS")||c.get("incompleteReason")!=null||c.get("map")==null
                     ||c.get("startedAt")==null||c.get("endedAt")==null||roster.isEmpty()||kind.equals("UNKNOWN")
-                    ||!Long.valueOf(2997).equals(number(object(c.get("map")).get("gameMapId"))))throw invalid();
+                    ||profile==null||profile.mapId()!=number(object(c.get("map")).get("gameMapId")))throw invalid();
         } else {
             String reason=text(c.get("incompleteReason"));
             if(Set.of("ARMED","RECORDING","FINAL_PENDING").contains(stage)){if(!reason.equals("CAPTURE_PENDING"))throw invalid();}
