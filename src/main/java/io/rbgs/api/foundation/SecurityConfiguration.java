@@ -15,6 +15,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -34,16 +36,23 @@ public class SecurityConfiguration {
     SecurityFilterChain securityFilterChain(HttpSecurity http,
             ObjectProvider<ClientRegistrationRepository> registrations,
             ObjectProvider<AccountService> accountServices,
+            Environment environment,
             @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
-        http.authorizeHttpRequests(authorize -> authorize
-                .requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
+        boolean local = environment.acceptsProfiles(Profiles.of("local"));
+        http.authorizeHttpRequests(authorize -> {
+            if (local) {
+                authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login").permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/api-client/approve").access(new AccountAuthorizationManager(accountServices, null, false));
+            }
+            authorize.requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
                 .requestMatchers(HttpMethod.GET, "/api/v1/matches/*/result", "/api/v1/capture-tests/*/result").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
                 .requestMatchers("/api/v1/characters/me", "/api/v1/play/context", "/api/v1/me/selection", "/api/v1/device-pairings/approve", "/api/v1/device-pairings/browser/**", "/api/v1/device-launches", "/api/v1/device-launches/*", "/api/v1/devices/**").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/moderation/**").access(new AccountAuthorizationManager(accountServices, "MODERATOR", false))
-                .anyRequest().denyAll());
+                .anyRequest().denyAll();
+        });
         http.csrf(csrf -> csrf.ignoringRequestMatchers(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, EmailFeedbackController.PATH),
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, ResendFeedbackController.PATH))
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
@@ -79,7 +88,12 @@ public class SecurityConfiguration {
                                 List.of(new SimpleGrantedAuthority("ROLE_" + account.role())),
                                 user.getIdToken(), user.getUserInfo(), "sub");
                     }))
-                    .defaultSuccessUrl(successUrl, true)
+                    .successHandler((request, response, authentication) -> {
+                        var session = request.getSession(false);
+                        boolean apiClient = local && session != null && Boolean.TRUE.equals(session.getAttribute(io.rbgs.api.identity.ApiClientLoginController.RETURN_TO_API_CLIENT));
+                        if (apiClient) session.removeAttribute(io.rbgs.api.identity.ApiClientLoginController.RETURN_TO_API_CLIENT);
+                        response.sendRedirect(apiClient ? "/api/v1/auth/api-client" : successUrl);
+                    })
                     .failureUrl(failureUrl));
             http.logout(logout -> logout.logoutUrl("/api/v1/auth/logout")
                     .logoutSuccessHandler((request, response, authentication) -> response.setStatus(204)));

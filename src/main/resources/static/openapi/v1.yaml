@@ -6,11 +6,11 @@ info:
 servers:
   - url: /api/v1
 paths:
-  /auth/bruno/requests:
+  /auth/api-client/requests:
     post:
-      operationId: startBrunoLogin
+      operationId: startApiClientLogin
       x-spring-profiles: [local]
-      summary: Start a five-minute Bruno login handoff
+      summary: Start a five-minute API client login handoff
       security: []
       description: Native transport only; rejects Origin and Sec-Fetch-Site. Returns approvalPath with browser-only
         secret in fragment, distinct pollingSecret, expiresIn=300 and intervalSeconds=5. Five starts per IP per minute.
@@ -23,26 +23,26 @@ paths:
           description: Browser transport forbidden
         '429':
           description: Rate limited
-  /auth/bruno:
+  /auth/api-client:
     get:
-      operationId: brunoApprovalPage
+      operationId: apiClientApprovalPage
       x-spring-profiles: [local]
       security: []
       responses:
         '200':
           description: Uncached HTML page; reads approval secret from URL fragment and asks explicit approval after
             web login
-  /auth/bruno/login:
+  /auth/api-client/login:
     get:
-      operationId: loginForBruno
+      operationId: loginForApiClient
       x-spring-profiles: [local]
       security: []
       responses:
         '302':
           description: Start normal Battle.net OAuth and return to the fixed approval page
-  /auth/bruno/approve:
+  /auth/api-client/approve:
     post:
-      operationId: approveBrunoLogin
+      operationId: approveApiClientLogin
       x-spring-profiles: [local]
       security:
       - webSession: []
@@ -69,9 +69,9 @@ paths:
                 secret:
                   type: string
                   pattern: ^[A-Za-z0-9_-]{43}$
-  /auth/bruno/token:
+  /auth/api-client/token:
     post:
-      operationId: exchangeBrunoLogin
+      operationId: exchangeApiClientLogin
       x-spring-profiles: [local]
       security: []
       description: Native polling secret only. Rejects Origin/Sec-Fetch-Site and existing sessions. Send without Cookie.
