@@ -234,14 +234,182 @@ paths:
         '200': { description: 'Approved request without device credential; no-store' }
         '403': { description: 'Web session, CSRF or explicit capture consent missing' }
         '410': { description: 'Unknown, expired or already approved request' }
+  /me/matches:
+    get:
+      operationId: listOwnMatchHistory
+      summary: List only the authenticated participant's assigned matches
+      description: No-store. Current active account required. Keyset pagination orders createdAt then match UUID descending. Result filters WIN/LOSS/DRAW use only verified or moderator-resolved outcomes mapped to the participant's assigned team. Capture-only tests cannot become wins/losses. Controlled tests follow the existing availability flag. No raw reports, account/device IDs, codes or moderator identity are returned. Unread markers persist until explicitly acknowledged; counters in the UI describe loaded matches only.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [ALL, WIN, LOSS, DRAW, PENDING, REVIEW, VERIFIED, RESOLVED, VOIDED, CANCELLED], default: ALL } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { in: query, name: cursor, schema: { type: string, maxLength: 256 } }
+      responses:
+        '200':
+          description: Participant history page; also establishes the CSRF cookie
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParticipantHistoryPage' }
+        '400': { description: 'Invalid filter, limit or cursor' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Current active account required' }
+  /me/matches/{id}:
+    get:
+      operationId: getOwnMatchHistoryDetail
+      summary: Read participant-safe match details and the account's own dispute
+      description: No-store. Assignment membership is required even for moderators. Own scoreboard observations preserve unknown statistics as null and are not canonical outcome proof. Other participants' conversations, report bodies, private account identifiers and moderator-only audit fields are omitted. Result updates and conversation messages are bounded to the latest 100 each, with a truncation flag. Reading does not mark updates as read.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Participant match detail; also establishes the CSRF cookie
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParticipantMatchDetail' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Current active account required' }
+        '404': { description: 'No assigned match for this account' }
+        '503': { description: 'Controlled tests unavailable' }
+  /me/matches/{id}/disputes:
+    post:
+      operationId: openOwnMatchDispute
+      summary: Open or reopen the participant's dispute with a required reason
+      description: Requires current result version, participant membership and CSRF. Pending results and cancelled tests cannot be disputed. At most one conversation exists per account/match; an open conversation must use replies. Opening a dispute retains prior events, clears the current canonical outcome and enters REVIEW / PLAYER_DISPUTE. Messages remain private to their author and moderators. No rating mutation occurs. Ten player messages per conversation per 15 minutes are allowed.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-XSRF-TOKEN, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisputeWrite' }
+      responses:
+        '200':
+          description: Persisted private conversation; no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchDisputeThread' }
+        '400': { description: 'Invalid message or missing version' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Active account and CSRF required' }
+        '404': { description: 'No assigned match' }
+        '409': { description: 'Stale result, pending/cancelled match or existing open dispute' }
+        '429': { description: 'Message rate limit reached' }
+  /me/matches/{id}/disputes/replies:
+    post:
+      operationId: replyToOwnMatchDispute
+      summary: Add context or respond to an evidence request in the account's own conversation
+      description: expectedVersion is the current conversation version, not the match version. A moderator request sets WAITING_PLAYER; a player reply sets OPEN. Match locking serializes replies with decisions and cancellation. Stale or closed threads return 409. Evidence files continue to use the authenticated companion upload flow; this route accepts plain text only.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-XSRF-TOKEN, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisputeWrite' }
+      responses:
+        '200':
+          description: Updated private conversation; no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchDisputeThread' }
+        '400': { description: 'Invalid message or version' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Active account and CSRF required' }
+        '404': { description: 'No own assigned match or conversation' }
+        '409': { description: 'Stale or closed conversation, or cancelled test' }
+        '429': { description: 'Message rate limit reached' }
+  /me/matches/{id}/read:
+    post:
+      operationId: acknowledgeOwnMatchUpdates
+      summary: Mark the result and conversation versions explicitly seen by the participant
+      description: No GET has this side effect. Both current result version and, when a thread exists, its current version must match. A newer request or decision cannot be silently acknowledged by an older view. Markers persist across browser sessions. Notifications in this implementation are in the history page on refresh/navigation, with no email, push or SSE delivery.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-XSRF-TOKEN, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { type: integer, format: int64, minimum: 0 }
+                disputeVersion: { type: [integer, 'null'], format: int64, minimum: 0 }
+      responses:
+        '204': { description: 'Read acknowledgement persisted; no-store' }
+        '400': { description: 'Missing or invalid result version' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Active account and CSRF required' }
+        '404': { description: 'No assigned match' }
+        '409': { description: 'Result or conversation changed; refresh first' }
+  /moderation/matches/{id}/disputes:
+    get:
+      operationId: listMatchDisputeConversations
+      summary: Read the match's participant conversations as an active moderator
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Private conversations with assigned character names; no-store
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 40
+                items:
+                  type: object
+                  required: [id, playerName, thread]
+                  properties:
+                    id: { type: string, format: uuid }
+                    playerName: { type: string, maxLength: 512 }
+                    thread: { $ref: '#/components/schemas/MatchDisputeThread' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Current active moderator required' }
+        '404': { description: 'No match' }
+  /moderation/matches/{id}/disputes/{dispute}/requests:
+    post:
+      operationId: requestMatchDisputeEvidence
+      summary: Ask a participant for more information or a saved-capture resync
+      description: Requires current conversation version. Appends an immutable moderator message, sets WAITING_PLAYER and creates a persistent unread marker. Closed conversations cannot receive requests. Existing moderator result decisions close conversations and append the participant-visible reason in the same transaction; test cancellation also closes open conversations with a localized cancellation notice.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: dispute, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-XSRF-TOKEN, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisputeWrite' }
+      responses:
+        '200':
+          description: Updated conversation; no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchDisputeThread' }
+        '400': { description: 'Invalid message or version' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Current active moderator and CSRF required' }
+        '404': { description: 'No matching match/conversation pair' }
+        '409': { description: 'Stale/closed conversation or cancelled match' }
+        '429': { description: 'Message rate limit reached' }
   /moderation/matches:
     get:
       operationId: listModerationMatches
       summary: List persisted matches for an active moderator
-      description: No-store. Uses current persisted account status and role. Newest first by createdAt and UUID descending, with opaque keyset pagination. Disabled controlled tests are omitted; other match modes remain visible. Summary includes declared players and usable independent reports per team, without raw reports, account IDs, assignment codes or credentials. CANCELLED is a display filter over cancelledAt; other state filters exclude cancelled matches. canCancel is true only for available controlled tests that have not been cancelled. Reading establishes the CSRF cookie for subsequent moderator commands.
+      description: No-store. Uses current persisted account status and role. Newest first by createdAt and UUID descending, with opaque keyset pagination. Disabled controlled tests are omitted; other match modes remain visible. Summary includes declared players and usable independent reports per team, without raw reports, account IDs, assignment codes or credentials. CANCELLED is a display filter over cancelledAt; other state filters exclude cancelled matches. canCancel is true only for available controlled tests without cancellation or a prior moderator decision. Reading establishes the CSRF cookie for subsequent moderator commands.
       security: [{ webSession: [] }]
       parameters:
-        - { in: query, name: status, schema: { type: string, enum: [ALL, PENDING, REVIEW, VERIFIED, CANCELLED], default: ALL } }
+        - { in: query, name: status, schema: { type: string, enum: [ALL, PENDING, REVIEW, VERIFIED, RESOLVED, VOIDED, CANCELLED], default: ALL } }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { in: query, name: cursor, schema: { type: string, maxLength: 256 }, description: 'Use nextCursor from the previous page with the same filter' }
       responses:
@@ -353,6 +521,31 @@ paths:
         '403': { description: "Inactive account" }
         '404': { description: "No visible test" }
         '503': { description: "Controlled testing disabled" }
+  /moderation/matches/{id}/decisions:
+    post:
+      operationId: decideMatchResult
+      summary: Resolve or void a match with immutable moderator audit history
+      description: Requires an active persisted moderator, web session and CSRF. Locks the shared match and requires its current result version. WIN and DRAW require nonempty selected evidence IDs from this match, each revalidated against the selected outcome and assigned teams; no automatic quorum is required for a human decision. CAPTURE_ONLY can only be voided. VOID accepts optional evidence references. Pending processing or cancellation returns 409. New reports reopen review and preserve the decision. A new correction decision appends history with correctionRequired for a future rating workflow; no rating is applied. The participant result routes expose the explanation, never the moderator identity or evidence references.
+      security: [{ webSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-XSRF-TOKEN, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModeratorDecision' }
+      responses:
+        '200':
+          description: Persisted result with the incremented version; no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchResult' }
+        '400': { description: 'Invalid reason, outcome, team or evidence references; unsupported outcome' }
+        '401': { description: 'Web login required' }
+        '403': { description: 'Current active moderator and CSRF required' }
+        '404': { description: 'Unknown or unavailable match' }
+        '409': { description: 'Stale version, cancelled match or unprocessed evidence; refresh before deciding' }
   /moderation/matches/{id}/verification:
     get:
       operationId: inspectMatchVerification
@@ -995,6 +1188,139 @@ components:
         name: { type: string, minLength: 1, maxLength: 128 }
         realm: { type: [string, 'null'], minLength: 1, maxLength: 128 }
         guid: { type: [string, 'null'], minLength: 1, maxLength: 128 }
+    DisputeWrite:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, message]
+      properties:
+        expectedVersion: { type: integer, format: int64, minimum: 0 }
+        message: { type: string, minLength: 1, maxLength: 2000, description: 'Nonblank plain text; no file uploads' }
+    MatchDisputeThread:
+      type: object
+      additionalProperties: false
+      required: [id, status, version, openedAt, updatedAt, unread, messages, olderMessages]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [OPEN, WAITING_PLAYER, RESOLVED] }
+        version: { type: integer, format: int64, minimum: 0 }
+        openedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        unread: { type: boolean }
+        olderMessages: { type: boolean }
+        messages:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, author, kind, body, at]
+            properties:
+              id: { type: string, format: uuid }
+              author: { type: string, enum: [PLAYER, MODERATOR, SYSTEM] }
+              kind: { type: string, enum: [DISPUTE_OPENED, PLAYER_REPLY, EVIDENCE_REQUEST, DECISION, CANCELLED] }
+              body: { type: string, maxLength: 2000 }
+              at: { type: string, format: date-time }
+    ParticipantHistoryPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ParticipantHistoryItem' } }
+        nextCursor: { type: [string, 'null'], maxLength: 256 }
+    ParticipantHistoryItem:
+      type: object
+      additionalProperties: false
+      required: [matchId, createdAt, mode, evidencePolicy, map, character, team, result, verification, disputeStatus, unread, cancelled]
+      properties:
+        matchId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        mode: { type: string, enum: [CONTROLLED_TEST, MATCHMADE] }
+        evidencePolicy: { type: string, enum: [CAPTURE_ONLY, FULL_ROSTER] }
+        map: { type: [string, 'null'], maxLength: 128, description: 'Known assigned map display name; unknown profiles remain null' }
+        character:
+          type: object
+          required: [name, realm]
+          properties:
+            name: { type: string, maxLength: 512 }
+            realm: { type: [string, 'null'], maxLength: 128 }
+        team: { type: [string, 'null'], enum: [A, B, null] }
+        result: { type: string, enum: [WIN, LOSS, DRAW, PENDING, REVIEW, VOIDED, CANCELLED] }
+        verification: { $ref: '#/components/schemas/MatchResult' }
+        disputeStatus: { type: [string, 'null'], enum: [OPEN, WAITING_PLAYER, RESOLVED, null] }
+        unread: { type: boolean }
+        cancelled: { type: boolean }
+    ParticipantMatchDetail:
+      type: object
+      additionalProperties: false
+      required: [match, roster, capture, dispute, updates, olderUpdates, canDispute]
+      properties:
+        match: { $ref: '#/components/schemas/ParticipantHistoryItem' }
+        roster:
+          type: array
+          maxItems: 40
+          items:
+            type: object
+            required: [name, realm, team, you]
+            properties:
+              name: { type: string, maxLength: 512 }
+              realm: { type: [string, 'null'], maxLength: 128 }
+              team: { type: [string, 'null'], enum: [A, B, null] }
+              you: { type: boolean }
+        capture:
+          oneOf:
+            - { type: 'null' }
+            - type: object
+              required: [startedAt, endedAt, durationSeconds, stats, delivery, product, build, revision]
+              properties:
+                startedAt: { type: [string, 'null'], format: date-time }
+                endedAt: { type: [string, 'null'], format: date-time }
+                durationSeconds: { type: [integer, 'null'], minimum: 0 }
+                delivery: { type: string, const: RECEIVED }
+                product: { type: [string, 'null'] }
+                build: { type: [string, 'null'] }
+                revision: { type: integer, minimum: 1 }
+                stats:
+                  oneOf:
+                    - { type: 'null' }
+                    - type: object
+                      description: Own immutable scoreboard observations; unknowns remain null
+                      required: [killingBlows, deaths, honorableKills, damage, healing]
+                      properties:
+                        killingBlows: { type: [integer, 'null'], minimum: 0 }
+                        deaths: { type: [integer, 'null'], minimum: 0 }
+                        honorableKills: { type: [integer, 'null'], minimum: 0 }
+                        damage: { type: [integer, 'null'], minimum: 0 }
+                        healing: { type: [integer, 'null'], minimum: 0 }
+        dispute:
+          oneOf:
+            - { type: 'null' }
+            - { $ref: '#/components/schemas/MatchDisputeThread' }
+        updates:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [id, at, status, reason, explanation, outcome, winningTeam]
+            properties:
+              id: { type: string, format: uuid }
+              at: { type: string, format: date-time }
+              status: { type: string, enum: [PENDING, REVIEW, VERIFIED, RESOLVED, VOIDED] }
+              reason: { type: [string, 'null'] }
+              explanation: { type: [string, 'null'], maxLength: 2000 }
+              outcome: { type: [string, 'null'], enum: [WIN, DRAW, null] }
+              winningTeam: { type: [string, 'null'], enum: [A, B, null] }
+        olderUpdates: { type: boolean }
+        canDispute: { type: boolean }
+    ModeratorDecision:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, outcome, reason, evidenceIds]
+      properties:
+        expectedVersion: { type: integer, format: int64, minimum: 0 }
+        outcome: { type: string, enum: [WIN, DRAW, VOID] }
+        winningTeam: { type: [string, 'null'], enum: [A, B, null], description: 'Required A/B for WIN; null or omitted for DRAW/VOID' }
+        reason: { type: string, minLength: 1, maxLength: 2000, description: 'Nonblank explanation visible to participants' }
+        evidenceIds: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
     ModerationMatchPage:
       type: object
       additionalProperties: false
@@ -1031,11 +1357,11 @@ components:
     MatchResult:
       type: object
       additionalProperties: false
-      required: [matchId, mode, status, reason, outcome, winningTeam, reportsA, reportsB, requiredPerTeam, deadline, version, policyVersion, ratingApplied]
+      required: [matchId, mode, status, reason, outcome, winningTeam, reportsA, reportsB, requiredPerTeam, deadline, version, policyVersion, ratingApplied, explanation, resolvedAt]
       properties:
         matchId: { type: string, format: uuid }
         mode: { type: string, enum: [CONTROLLED_TEST, MATCHMADE] }
-        status: { type: string, enum: [PENDING, VERIFIED, REVIEW] }
+        status: { type: string, enum: [PENDING, VERIFIED, REVIEW, RESOLVED, VOIDED] }
         reason: { type: [string, 'null'] }
         outcome: { type: [string, 'null'], enum: [WIN, DRAW, null] }
         winningTeam: { type: [string, 'null'], enum: [A, B, null] }
@@ -1046,6 +1372,8 @@ components:
         version: { type: integer, format: int64, minimum: 0 }
         policyVersion: { type: string, const: controlled-roster-v1 }
         ratingApplied: { type: boolean, const: false }
+        explanation: { type: [string, 'null'], maxLength: 2000, description: 'Participant-visible moderator reason, only for RESOLVED or VOIDED' }
+        resolvedAt: { type: [string, 'null'], format: date-time }
     CaptureTestResult:
       deprecated: true
       allOf:

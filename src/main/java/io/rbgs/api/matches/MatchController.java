@@ -12,6 +12,12 @@ import org.springframework.security.web.csrf.CsrfToken;
 public class MatchController {
     private final MatchResultService results;
 
+    @PostMapping("/api/v1/moderation/matches/{id}/decisions")
+    public ResponseEntity<MatchResultService.Result> decide(Authentication auth, @PathVariable UUID id,
+            @RequestBody MatchResultService.ModeratorDecision decision) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(results.decide(auth, id, decision));
+    }
+
     @GetMapping("/api/v1/moderation/matches")
     public ResponseEntity<MatchResultService.Listing> list(Authentication auth,
             @RequestParam(defaultValue = "ALL") String status, @RequestParam(defaultValue = "20") int limit,

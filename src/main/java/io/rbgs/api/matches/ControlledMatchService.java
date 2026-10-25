@@ -24,6 +24,7 @@ public class ControlledMatchService {
     private final AccountService accounts;
     private final AccountRepository accountRepository;
     private final MatchAvailability availability;
+    private final MatchDisputeService disputes;
 
     private void enabled() { availability.requireControlledEnabled(); }
     private UUID moderator(Authentication auth) {
@@ -100,14 +101,17 @@ public class ControlledMatchService {
     @Transactional
     public void cancel(Authentication auth, UUID id, Long expectedVersion) {
         enabled();
-        moderator(auth);
+        UUID actor = moderator(auth);
         var match = matches.lockById(id).filter(m -> m.getMode() == MatchMode.CONTROLLED_TEST)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (expectedVersion != null && expectedVersion < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         if (match.getCancelledAt() != null) return;
+        if (match.getDecisionAt() != null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Use a new moderator decision to correct a resolved match.");
         if (expectedVersion != null && expectedVersion != match.getResultVersion())
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This match changed. Refresh it before cancelling.");
         match.cancel(Instant.now());
         results.evaluate(match, Instant.now());
+        disputes.cancelled(match, actor, MatchDisputeService.now());
     }
 }

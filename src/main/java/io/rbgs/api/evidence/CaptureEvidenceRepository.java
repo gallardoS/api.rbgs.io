@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CaptureEvidenceRepository extends JpaRepository<CaptureEvidenceEntity, UUID> {
+    List<CaptureEvidenceEntity> findByAccountIdAndAssignmentIdAndCaptureIdOrderByRevisionDesc(
+            UUID account, UUID assignment, UUID capture, org.springframework.data.domain.Pageable page);
     Optional<CaptureEvidenceEntity> findByAccountIdAndAssignmentIdAndCaptureIdAndRevision(
             UUID account, UUID assignment, UUID capture, int revision);
 

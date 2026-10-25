@@ -32,6 +32,10 @@ class MatchVerificationTests {
     @Autowired CaptureService captures;
     @Autowired ControlledMatchService controlled;
     @Autowired MatchResultService results;
+    @Autowired MatchHistoryService history;
+    @Autowired MatchRepository matchRepository;
+    @Autowired MatchAssignmentRepository assignmentRepository;
+    @Autowired MatchDisputeService disputes;
     @Autowired CaptureJson json;
     @Autowired AccountService accounts;
     @Autowired DeviceService devices;
@@ -284,6 +288,9 @@ class MatchVerificationTests {
         results.processPending();
         assertEquals("STORED_DATA_INTEGRITY", results.result(auth(0), match).reason());
         assertEquals(0, results.result(auth(0), match).reportsA());
+        assertNotNull(history.detail(auth(0), match).capture());
+        assertEquals("RECEIVED", history.detail(auth(0), match).capture().delivery());
+        assertNull(history.detail(auth(0), match).capture().stats());
     }
 
     @Test void test_with_no_reports_expires_and_can_be_cancelled() throws Exception {
@@ -313,7 +320,7 @@ class MatchVerificationTests {
                 .andExpect(jsonPath("$.reports").doesNotExist());
         mvc.perform(get("/api/v1/moderation/capture-tests/" + match + "/verification").with(signedIn)).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/moderation/capture-tests/" + match + "/verification").with(oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.getFirst()))))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.reports.length()").value(12)).andExpect(jsonPath("$.events[0].status").value("VERIFIED"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.reports.length()").value(12)).andExpect(jsonPath("$.events[?(@.status == 'VERIFIED')]").isNotEmpty());
         var foreign = UUID.randomUUID();
         assertEquals(404, assertThrows(ResponseStatusException.class, () -> results.ownResult(foreign, (UUID)descriptors.get(1).get("captureId"))).getStatusCode().value());
         String outsider = UUID.randomUUID().toString();
@@ -361,5 +368,262 @@ class MatchVerificationTests {
                 .andExpect(status().isNotFound());
         assertNull(db.queryForObject("SELECT cancelled_at FROM rbgs.matches WHERE id=?", Instant.class, match));
         assertEquals("MATCHMADE", results.result(auth(0), match).mode());
+    }
+
+    MatchResultService.ModeratorDecision decision(String outcome, String winner, List<UUID> ids) {
+        return new MatchResultService.ModeratorDecision(results.result(auth(0), match).version(), outcome, winner,
+                "Reviewed the original scoreboard and assigned teams.", ids);
+    }
+
+    @Test void moderator_resolves_supported_outcome_without_quorum_and_preserves_evidence() throws Exception {
+        var receipt = submit(0, payload(0, 1, false));
+        results.processPending();
+        String raw = db.queryForObject("SELECT redacted_payload FROM rbgs.capture_evidence WHERE id=?", String.class, receipt.evidenceId());
+        var result = results.decide(auth(0), match, decision("WIN", "A", List.of(receipt.evidenceId())));
+        assertEquals("RESOLVED", result.status()); assertEquals("A", result.winningTeam());
+        assertNotNull(result.explanation()); assertNotNull(result.resolvedAt()); assertFalse(result.ratingApplied());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND actor_id=? AND decision_reason IS NOT NULL AND expected_version IS NOT NULL", Integer.class, match, players.get(0).id()));
+        results.processPending();
+        assertEquals(result, results.result(auth(1), match));
+        assertEquals(raw, db.queryForObject("SELECT redacted_payload FROM rbgs.capture_evidence WHERE id=?", String.class, receipt.evidenceId()));
+        var signedIn = oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.get(1)));
+        mvc.perform(get("/api/v1/matches/" + match + "/result").with(signedIn))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.explanation").value(result.explanation()))
+                .andExpect(jsonPath("$.actorId").doesNotExist()).andExpect(jsonPath("$.evidenceIds").doesNotExist());
+        mvc.perform(post("/api/v1/moderation/capture-tests/" + match + "/cancel")
+                .with(oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.getFirst()))).with(csrf()))
+                .andExpect(status().isConflict());
+    }
+
+    @Test void draw_requires_draw_evidence_and_void_can_resolve_without_reports() throws Exception {
+        var value = payload(0, 1, false);
+        var outcome = object(object(value.get("capture")).get("outcome"));
+        outcome.put("kind", "DRAW"); outcome.put("winningObservedTeamKey", null);
+        var receipt = submit(0, value); results.processPending();
+        var resolved = results.decide(auth(0), match, decision("DRAW", null, List.of(receipt.evidenceId())));
+        assertEquals("DRAW", resolved.outcome()); assertNull(resolved.winningTeam());
+        var voided = results.decide(auth(0), match, decision("VOID", null, List.of()));
+        assertEquals("VOIDED", voided.status()); assertNull(voided.outcome()); assertNull(voided.winningTeam());
+        assertFalse(voided.ratingApplied());
+        assertEquals(1, results.list(auth(0), "VOIDED", 50, null).items().stream().filter(m -> match.equals(m.matchId())).count());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND correction_required=true AND previous_status='RESOLVED' AND previous_outcome_kind='DRAW'", Integer.class, match));
+    }
+
+    @Test void decisions_reject_missing_reason_stale_versions_and_unsupported_outcomes() throws Exception {
+        var receipt = submit(0, payload(0, 1, false));
+        assertEquals(409, assertThrows(ResponseStatusException.class, () -> results.decide(auth(0), match, decision("WIN", "A", List.of(receipt.evidenceId())))).getStatusCode().value());
+        results.processPending();
+        for (var invalid : List.of(decision("WIN", "B", List.of(receipt.evidenceId())), decision("DRAW", null, List.of(receipt.evidenceId())),
+                decision("WIN", "A", List.of()), decision("VOID", null, List.of(UUID.randomUUID())), decision("WIN", null, List.of(receipt.evidenceId())),
+                new MatchResultService.ModeratorDecision(null, "VOID", null, "reason", List.of()),
+                new MatchResultService.ModeratorDecision(0L, "VOID", null, "  ", List.of()),
+                new MatchResultService.ModeratorDecision(0L, "VOID", null, "x".repeat(2001), List.of())))
+            assertEquals(400, assertThrows(ResponseStatusException.class, () -> results.decide(auth(0), match, invalid)).getStatusCode().value());
+        var old = decision("VOID", null, List.of());
+        results.decide(auth(0), match, old);
+        assertEquals(409, assertThrows(ResponseStatusException.class, () -> results.decide(auth(0), match, old)).getStatusCode().value());
+    }
+
+    @Test void late_evidence_reopens_manual_result_and_new_decision_preserves_history() throws Exception {
+        var first = submit(0, payload(0, 1, false)); results.processPending();
+        results.decide(auth(0), match, decision("WIN", "A", List.of(first.evidenceId())));
+        var opposite = payload(1, 1, false);
+        object(object(opposite.get("capture")).get("outcome")).put("winningObservedTeamKey", "1");
+        var second = submit(1, opposite); results.processPending();
+        var review = results.result(auth(1), match);
+        assertEquals("REVIEW", review.status()); assertEquals("LATE_EVIDENCE_AFTER_DECISION", review.reason());
+        assertNull(review.outcome()); assertNull(review.explanation());
+        var corrected = results.decide(auth(0), match, decision("WIN", "B", List.of(second.evidenceId())));
+        assertEquals("B", corrected.winningTeam());
+        assertEquals(2, db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND actor_id IS NOT NULL", Integer.class, match));
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND status='RESOLVED' AND winning_team='A'", Integer.class, match));
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND correction_required=true", Integer.class, match));
+    }
+
+    @Test void concurrent_moderators_cannot_both_finalize_the_same_version() throws Exception {
+        var request = decision("VOID", null, List.of());
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var gate = new CountDownLatch(1);
+            Callable<Integer> work = () -> {
+                gate.await();
+                try { results.decide(auth(0), match, request); return 200; }
+                catch (ResponseStatusException conflict) { return conflict.getStatusCode().value(); }
+            };
+            var a = pool.submit(work); var b = pool.submit(work); gate.countDown();
+            assertEquals(Set.of(200, 409), Set.of(a.get(15, TimeUnit.SECONDS), b.get(15, TimeUnit.SECONDS)));
+        }
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND actor_id IS NOT NULL", Integer.class, match));
+    }
+
+    @Test void decision_endpoint_enforces_current_moderator_csrf_and_returns_new_version() throws Exception {
+        String path = "/api/v1/moderation/matches/" + match + "/decisions";
+        String body = json.encode(Map.of("expectedVersion", results.result(auth(0), match).version(), "outcome", "VOID", "reason", "No reliable result.", "evidenceIds", List.of()));
+        var login = oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.getFirst()));
+        mvc.perform(post(path).contentType("application/json").content(body).with(csrf())).andExpect(status().isUnauthorized());
+        mvc.perform(post(path).contentType("application/json").content(body).with(login)).andExpect(status().isForbidden());
+        mvc.perform(post(path).contentType("application/json").content(body)
+                .with(oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.get(1)))).with(csrf())).andExpect(status().isForbidden());
+        mvc.perform(post(path).contentType("application/json").content(body).with(login).with(csrf()))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.status").value("VOIDED")).andExpect(jsonPath("$.version").value(1));
+        mvc.perform(post(path).contentType("application/json").content(body).with(login).with(csrf())).andExpect(status().isConflict());
+        db.update("UPDATE rbgs.accounts SET account_status='SUSPENDED' WHERE id=?", players.get(0).id());
+        mvc.perform(post(path).contentType("application/json").content(body).with(login).with(csrf())).andExpect(status().isForbidden());
+    }
+
+    @Test void cancelled_matches_cannot_be_resolved() throws Exception {
+        controlled.cancel(auth(0), match);
+        assertEquals(409, assertThrows(ResponseStatusException.class, () -> results.decide(auth(0), match, decision("VOID", null, List.of()))).getStatusCode().value());
+    }
+
+    @Test void participant_history_is_private_paginated_filtered_and_does_not_expose_moderator_data() throws Exception {
+        quorum();
+        var first = history.list(auth(0), "ALL", 1, null);
+        assertEquals(match, first.items().getFirst().matchId()); assertEquals("WIN", first.items().getFirst().result());
+        assertEquals("LOSS", history.list(auth(10), "LOSS", 20, null).items().getFirst().result());
+        assertEquals(0, history.list(auth(10), "WIN", 20, null).items().size());
+        var login = oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.get(1)));
+        var response = mvc.perform(get("/api/v1/me/matches").with(login)).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store")).andReturn().getResponse().getContentAsString();
+        assertFalse(response.contains("accountId")); assertFalse(response.contains("assignmentCode")); assertFalse(response.contains("evidenceIds"));
+        mvc.perform(get("/api/v1/me/matches")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/me/matches").param("cursor", "!invalid").with(login)).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/me/matches").param("limit", "51").with(login)).andExpect(status().isBadRequest());
+        String outsider = UUID.randomUUID().toString(); subjects.add(outsider); players.add(accounts.upsert(ISSUER, outsider, "OutsiderFixture"));
+        var foreign = oidcLogin().idToken(t -> t.issuer(ISSUER).subject(outsider));
+        mvc.perform(get("/api/v1/me/matches/"+match).with(foreign)).andExpect(status().isNotFound());
+        assertEquals(0, history.list(auth(20), "ALL", 20, null).items().size());
+    }
+
+    @Test void own_statistics_are_observations_with_unknowns_not_invented_zeroes_or_other_player_rows() throws Exception {
+        var value = payload(0, 1, false); submit(0, value); results.processPending();
+        var detail = history.detail(auth(0), match);
+        assertNotNull(detail.capture()); assertEquals(0L, detail.capture().stats().damage());
+        assertNull(detail.capture().stats().deaths()); assertNull(detail.capture().stats().healing());
+        assertEquals("Player0 Family", detail.match().character().name());
+        assertEquals(1, detail.roster().stream().filter(MatchHistoryService.Player::you).count());
+        var login = oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.get(0)));
+        String body = mvc.perform(get("/api/v1/me/matches/"+match).with(login)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        for(String secret : List.of("redactedPayload", "normalizedFacts", "accountId", "deviceId", "assignmentCode", "actorId", "evidenceIds")) assertFalse(body.contains(secret), secret);
+        assertNull(history.detail(auth(1), match).capture());
+        db.update("UPDATE rbgs.matches SET evidence_policy='CAPTURE_ONLY' WHERE id=?",match);
+        var wrongCharacter=payload(0,2,false);wrongCharacter.put("observedCharacter",character(1));
+        submit(0,wrongCharacter);results.processPending();
+        assertNotNull(history.detail(auth(0),match).capture());assertNull(history.detail(auth(0),match).capture().stats());
+    }
+
+    @Test void dispute_requests_replies_resolution_and_read_receipts_survive_fresh_queries() throws Exception {
+        var receipt=submit(1,payload(1,1,false));results.processPending();
+        results.decide(auth(0),match,decision("WIN","A",List.of(receipt.evidenceId())));
+        var initial=history.detail(auth(1),match); assertTrue(initial.match().unread());
+        disputes.markRead(auth(1),match,initial.match().verification().version(),null);
+        assertFalse(history.detail(auth(1),match).match().unread());
+        var opened=disputes.open(auth(1),match,new MatchDisputeService.Write(initial.match().verification().version(),"The result needs a review."));
+        assertEquals("OPEN",opened.status());assertEquals("REVIEW",results.result(auth(1),match).status());
+        assertNull(results.result(auth(1),match).outcome());assertEquals("PLAYER_DISPUTE",results.result(auth(1),match).reason());
+        assertNull(history.detail(auth(2),match).dispute());
+        var requested=disputes.requestEvidence(auth(0),match,opened.id(),new MatchDisputeService.Write(opened.version(),"Please resync the saved final scoreboard."));
+        assertEquals("WAITING_PLAYER",requested.status());assertTrue(history.detail(auth(1),match).match().unread());
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.markRead(auth(1),match,results.result(auth(1),match).version(),opened.version())).getStatusCode().value());
+        var reply=disputes.reply(auth(1),match,new MatchDisputeService.Write(requested.version(),"I resynced the saved capture."));
+        assertEquals("OPEN",reply.status());assertEquals(3,reply.messages().size());
+        results.decide(auth(0),match,decision("WIN","A",List.of(receipt.evidenceId())));
+        var resolved=history.detail(auth(1),match);assertEquals("RESOLVED",resolved.dispute().status());assertTrue(resolved.match().unread());
+        assertEquals("DECISION",resolved.dispute().messages().getLast().kind());
+        disputes.markRead(auth(1),match,resolved.match().verification().version(),resolved.dispute().version());
+        assertFalse(history.detail(auth(1),match).match().unread());
+        assertEquals(4,disputes.moderation(auth(0),match).getFirst().thread().messages().size());
+    }
+
+    @Test void duplicate_stale_closed_and_cancelled_dispute_mutations_are_rejected() throws Exception {
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.open(auth(1),match,new MatchDisputeService.Write(0L,"Too early"))).getStatusCode().value());
+        var receipt=submit(1,payload(1,1,false));results.processPending();
+        results.decide(auth(0),match,decision("WIN","A",List.of(receipt.evidenceId())));
+        long version=results.result(auth(1),match).version();
+        assertEquals(400,assertThrows(ResponseStatusException.class,()->disputes.open(auth(1),match,new MatchDisputeService.Write(version,"   "))).getStatusCode().value());
+        var thread=disputes.open(auth(1),match,new MatchDisputeService.Write(version,"Review please"));
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.open(auth(1),match,new MatchDisputeService.Write(version,"Duplicate"))).getStatusCode().value());
+        var request=disputes.requestEvidence(auth(0),match,thread.id(),new MatchDisputeService.Write(thread.version(),"Please provide more context"));
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.reply(auth(1),match,new MatchDisputeService.Write(thread.version(),"Stale"))).getStatusCode().value());
+        results.decide(auth(0),match,decision("VOID",null,List.of()));
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.reply(auth(1),match,new MatchDisputeService.Write(request.version(),"Closed"))).getStatusCode().value());
+        assertEquals("OPEN",disputes.open(auth(1),match,new MatchDisputeService.Write(results.result(auth(1),match).version(),"I dispute the corrected decision")).status());
+    }
+
+    @Test void dispute_routes_enforce_participation_moderator_role_csrf_and_current_account_status() throws Exception {
+        results.decide(auth(0),match,decision("VOID",null,List.of()));
+        String path="/api/v1/me/matches/"+match+"/disputes";
+        String body=json.encode(Map.of("expectedVersion",results.result(auth(1),match).version(),"message","Review this void decision"));
+        var login=oidcLogin().idToken(t->t.issuer(ISSUER).subject(subjects.get(1)));
+        mvc.perform(post(path).with(login).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post(path).with(login).with(csrf()).contentType("application/json").content(body)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.messages[0].author").value("PLAYER")).andExpect(jsonPath("$.messages[0].authorId").doesNotExist());
+        mvc.perform(get("/api/v1/moderation/matches/"+match+"/disputes").with(login)).andExpect(status().isForbidden());
+        assertNull(history.detail(auth(2),match).dispute());
+        var thread=history.detail(auth(1),match).dispute();
+        mvc.perform(post("/api/v1/me/matches/"+match+"/read").with(login).with(csrf()).contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+        assertEquals(404,assertThrows(ResponseStatusException.class,()->disputes.requestEvidence(auth(0),UUID.randomUUID(),thread.id(),new MatchDisputeService.Write(thread.version(),"Foreign match"))).getStatusCode().value());
+        db.update("UPDATE rbgs.accounts SET account_status='SUSPENDED' WHERE id=?",players.get(1).id());
+        mvc.perform(get("/api/v1/me/matches").with(login)).andExpect(status().isForbidden());
+        mvc.perform(post(path).with(login).with(csrf()).contentType("application/json").content(body)).andExpect(status().isForbidden());
+    }
+
+    @Test void concurrent_dispute_opens_create_one_thread_and_preserve_the_original_decision() throws Exception {
+        results.decide(auth(0),match,decision("VOID",null,List.of()));
+        var request=new MatchDisputeService.Write(results.result(auth(1),match).version(),"Review the outcome");
+        try(var pool=Executors.newFixedThreadPool(2)){
+            var gate=new CountDownLatch(1);
+            Callable<Integer> work=()->{gate.await();try{disputes.open(auth(1),match,request);return 200;}catch(ResponseStatusException e){return e.getStatusCode().value();}};
+            var a=pool.submit(work);var b=pool.submit(work);gate.countDown();
+            assertEquals(Set.of(200,409),Set.of(a.get(15,TimeUnit.SECONDS),b.get(15,TimeUnit.SECONDS)));
+        }
+        assertEquals(1,db.queryForObject("SELECT count(*) FROM rbgs.match_disputes WHERE match_id=?",Integer.class,match));
+        assertEquals(1,db.queryForObject("SELECT count(*) FROM rbgs.match_result_events WHERE match_id=? AND status='VOIDED'",Integer.class,match));
+        results.processPending();assertEquals("PLAYER_DISPUTE",results.result(auth(1),match).reason());
+    }
+
+    @Test void history_cursor_has_stable_order_under_ties_and_never_repeats_a_match() {
+        var original=matchRepository.findById(match).orElseThrow();
+        var created=new ArrayList<MatchEntity>();
+        UUID ownCharacter=db.queryForObject("SELECT character_id FROM rbgs.match_assignments WHERE match_id=? AND account_id=?",UUID.class,match,players.get(1).id());
+        try {
+            for(int i=0;i<3;i++){
+                var test=matchRepository.saveAndFlush(new MatchEntity(players.get(0).id(),Instant.parse("2099-01-01T00:00:00Z"),Instant.parse("2099-01-01T01:00:00Z"),original.getExpectedRoster(),MatchMode.CONTROLLED_TEST,MatchEvidencePolicy.FULL_ROSTER,original.getProfile(),Instant.parse("2099-01-01T05:00:00Z")));
+                created.add(test);
+                assignmentRepository.saveAndFlush(new MatchAssignmentEntity(test,players.get(1).id(),ownCharacter,"A"));
+            }
+            var first=history.list(auth(1),"ALL",2,null);
+            var second=history.list(auth(1),"ALL",2,first.nextCursor());
+            var ids=new ArrayList<UUID>();first.items().forEach(m->ids.add(m.matchId()));second.items().forEach(m->ids.add(m.matchId()));
+            assertEquals(4,new HashSet<>(ids).size());assertNull(second.nextCursor());
+            assertEquals(created.stream().map(MatchEntity::getId).sorted(Comparator.comparing(UUID::toString).reversed()).toList(),ids.subList(0,3));
+        } finally { for(var test:created){db.update("DELETE FROM rbgs.match_assignments WHERE match_id=?",test.getId());db.update("DELETE FROM rbgs.matches WHERE id=?",test.getId());} }
+    }
+
+    @Test void cancelled_history_cannot_be_disputed() {
+        controlled.cancel(auth(0),match);
+        assertFalse(history.detail(auth(1),match).canDispute());
+        assertEquals("CANCELLED",history.detail(auth(1),match).match().result());
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.open(auth(1),match,new MatchDisputeService.Write(results.result(auth(1),match).version(),"Cannot dispute cancellation"))).getStatusCode().value());
+    }
+
+    @Test void dispute_rate_limit_preserves_all_accepted_messages() {
+        results.decide(auth(0),match,decision("VOID",null,List.of()));
+        var thread=disputes.open(auth(1),match,new MatchDisputeService.Write(results.result(auth(1),match).version(),"Review please"));
+        for(int i=0;i<9;i++)thread=disputes.reply(auth(1),match,new MatchDisputeService.Write(thread.version(),"Additional context "+i));
+        var version=thread.version();
+        assertEquals(429,assertThrows(ResponseStatusException.class,()->disputes.reply(auth(1),match,new MatchDisputeService.Write(version,"Too many"))).getStatusCode().value());
+        assertEquals(10,history.detail(auth(1),match).dispute().messages().size());
+    }
+
+    @Test void cancelling_an_unresolved_test_closes_its_dispute_with_a_player_visible_notification() {
+        db.update("UPDATE rbgs.matches SET verification_deadline=now()-interval '1 second' WHERE id=?",match);
+        results.processPending();
+        var opened=disputes.open(auth(1),match,new MatchDisputeService.Write(results.result(auth(1),match).version(),"Please review this test"));
+        controlled.cancel(auth(0),match);
+        var detail=history.detail(auth(1),match);
+        assertEquals("CANCELLED",detail.match().result());assertFalse(detail.canDispute());assertTrue(detail.match().unread());
+        assertEquals("RESOLVED",detail.dispute().status());assertEquals("CANCELLED",detail.dispute().messages().getLast().kind());
+        assertEquals(409,assertThrows(ResponseStatusException.class,()->disputes.reply(auth(1),match,new MatchDisputeService.Write(opened.version(),"This test is cancelled"))).getStatusCode().value());
     }
 }

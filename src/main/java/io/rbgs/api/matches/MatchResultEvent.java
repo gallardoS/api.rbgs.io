@@ -22,6 +22,25 @@ public class MatchResultEvent {
     @Column(name = "winning_team", length = 1, updatable = false) private String winningTeam;
     @Column(name = "evidence_ids", nullable = false, updatable = false, columnDefinition = "text") private String evidenceIds;
     @Column(name = "policy_version", nullable = false, length = 32, updatable = false) private String policyVersion;
+    @Column(name = "actor_id", updatable = false) private UUID actorId;
+    @Column(name = "decision_reason", length = 2000, updatable = false) private String decisionReason;
+    @Column(name = "expected_version", updatable = false) private Long expectedVersion;
+    @Column(name = "previous_reason", length = 128, updatable = false) private String previousReason;
+    @Column(name = "previous_outcome_kind", length = 8, updatable = false) private String previousOutcomeKind;
+    @Column(name = "previous_winning_team", length = 1, updatable = false) private String previousWinningTeam;
+    @Column(name = "correction_required", nullable = false, updatable = false) private boolean correctionRequired;
+
+    public MatchResultEvent(MatchEntity match, String previous, String previousReason, String previousOutcome,
+            String previousWinner, String evidenceIds, Instant at, UUID actor, long expectedVersion, boolean correction) {
+        this(match, previous, evidenceIds, at);
+        this.actorId = actor;
+        this.decisionReason = match.getDecisionReason();
+        this.expectedVersion = expectedVersion;
+        this.previousReason = previousReason;
+        this.previousOutcomeKind = previousOutcome;
+        this.previousWinningTeam = previousWinner;
+        this.correctionRequired = correction;
+    }
 
     public MatchResultEvent(MatchEntity match, String previous, String evidenceIds, Instant at) {
         this.id = UUID.randomUUID();

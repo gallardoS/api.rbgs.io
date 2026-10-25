@@ -31,6 +31,15 @@ public class MatchEntity {
     @Column(name = "reports_b", nullable = false) private int reportsB;
     @Column(name = "verification_deadline") private Instant verificationDeadline;
     @Version @Column(name = "result_version", nullable = false) private long resultVersion;
+    @Column(name = "decision_reason", length = 2000) private String decisionReason;
+    @Column(name = "decision_at") private Instant decisionAt;
+    @Column(name = "decision_evidence_ids", columnDefinition = "text") private String decisionEvidenceIds;
+
+    public void decision(String reason, String evidenceIds, Instant at) {
+        decisionReason = reason;
+        decisionEvidenceIds = evidenceIds;
+        decisionAt = at;
+    }
 
     public MatchEntity(UUID actor, Instant createdAt, Instant captureStartDeadline, String roster,
             MatchMode mode, MatchEvidencePolicy evidencePolicy, String profile, Instant verificationDeadline) {

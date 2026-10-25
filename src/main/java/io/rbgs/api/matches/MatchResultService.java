@@ -30,10 +30,66 @@ public class MatchResultService {
     private final AccountService accounts;
     private final AccountRepository accountRepository;
     private final MatchAvailability availability;
+    private final MatchDisputeService disputes;
 
     public record Result(UUID matchId, String mode, String status, String reason, String outcome,
             String winningTeam, int reportsA, int reportsB, int requiredPerTeam, Instant deadline,
-            long version, String policyVersion, boolean ratingApplied) {}
+            long version, String policyVersion, boolean ratingApplied, String explanation, Instant resolvedAt) {}
+
+    public record ModeratorDecision(Long expectedVersion, String outcome, String winningTeam, String reason, List<UUID> evidenceIds) {}
+
+    @Transactional
+    public Result decide(Authentication auth, UUID id, ModeratorDecision request) {
+        UUID actor = moderator(auth);
+        if (request == null || request.expectedVersion() == null || request.expectedVersion() < 0
+                || request.outcome() == null || !Set.of("WIN", "DRAW", "VOID").contains(request.outcome())
+                || request.reason() == null || request.reason().isBlank() || request.reason().length() > 2000
+                || request.reason().codePoints().anyMatch(c -> Character.isISOControl(c) && c != '\n' && c != '\r')
+                || request.evidenceIds() == null || request.evidenceIds().size() > 1000
+                || request.evidenceIds().stream().anyMatch(Objects::isNull)
+                || new HashSet<>(request.evidenceIds()).size() != request.evidenceIds().size()
+                || ("WIN".equals(request.outcome()) ? !("A".equals(request.winningTeam()) || "B".equals(request.winningTeam())) : request.winningTeam() != null))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide a decision, reason, evidence references and current version");
+        var match = matches.lockById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        availability.requireAvailable(match);
+        if (match.getResultVersion() != request.expectedVersion() || match.getCancelledAt() != null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This match changed. Refresh before deciding.");
+        var reports = evidence.findForMatch(id);
+        if (reports.stream().anyMatch(e -> "PENDING".equals(e.getValidationStatus())))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Evidence is still being processed. Refresh before deciding.");
+        var selected = reports.stream().filter(e -> request.evidenceIds().contains(e.getId())).toList();
+        if (selected.size() != request.evidenceIds().size())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Evidence must belong to this match");
+        if (!"VOID".equals(request.outcome())) {
+            if (match.getEvidencePolicy() != MatchEvidencePolicy.FULL_ROSTER || selected.isEmpty())
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A supported outcome requires full-roster evidence");
+            for (var report : selected) {
+                var checked = verification.normalize(match, report);
+                if (!"VALID".equals(checked.status()) || !request.outcome().equals(checked.facts().get("outcome"))
+                        || !Objects.equals(request.winningTeam(), checked.facts().get("winningTeam")))
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected evidence does not support this outcome");
+            }
+        }
+        String previous = match.getVerificationStatus(), previousReason = match.getVerificationReason();
+        String previousOutcome = match.getOutcomeKind(), previousWinner = match.getWinningTeam();
+        boolean correction = events.findByMatchIdOrderByRecordedAtAscIdAsc(id).stream()
+                .anyMatch(e -> Set.of("VERIFIED", "RESOLVED", "VOIDED").contains(e.getStatus()));
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        String selectedIds = json.encode(request.evidenceIds().stream().map(UUID::toString).sorted().toList());
+        match.decision(request.reason().strip(), reportIds(reports), now);
+        boolean voided = "VOID".equals(request.outcome());
+        match.result(voided ? "VOIDED" : "RESOLVED", voided ? "MODERATOR_VOIDED" : "MODERATOR_RESOLVED",
+                voided ? null : request.outcome(), request.winningTeam(), match.getReportsA(), match.getReportsB());
+        events.save(new MatchResultEvent(match, previous, previousReason, previousOutcome, previousWinner, selectedIds,
+                now, actor, request.expectedVersion(), correction));
+        disputes.resolved(match, actor, now);
+        matches.flush();
+        return view(match);
+    }
+
+    private String reportIds(List<io.rbgs.api.evidence.CaptureEvidenceEntity> reports) {
+        return json.encode(reports.stream().map(e -> e.getId().toString()).sorted().toList());
+    }
 
     public record DeclaredPlayer(String name, String realm, String team) {}
     public record Summary(UUID matchId, MatchMode mode, MatchEvidencePolicy evidencePolicy, String profile,
@@ -41,17 +97,18 @@ public class MatchResultService {
             Result result, boolean canCancel) {}
     public record Listing(List<Summary> items, String nextCursor) {}
 
-    private void moderator(Authentication auth) {
+    private UUID moderator(Authentication auth) {
         var account = accounts.currentUser(auth);
         if (account == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         if (accountRepository.findById(account.id()).filter(a -> "ACTIVE".equals(a.getStatus()) && "MODERATOR".equals(a.getRole())).isEmpty())
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        return account.id();
     }
 
     @Transactional(readOnly = true)
     public Listing list(Authentication auth, String status, int limit, String cursor) {
         moderator(auth);
-        if (!Set.of("ALL", "PENDING", "VERIFIED", "REVIEW", "CANCELLED").contains(status) || limit < 1 || limit > 50)
+        if (!Set.of("ALL", "PENDING", "VERIFIED", "REVIEW", "RESOLVED", "VOIDED", "CANCELLED").contains(status) || limit < 1 || limit > 50)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid match filter or page size");
         var page = PageRequest.of(0, limit + 1);
         List<MatchEntity> rows;
@@ -84,7 +141,7 @@ public class MatchResultService {
             }).toList();
             return new Summary(m.getId(), m.getMode(), m.getEvidencePolicy(), m.getProfile(), m.getCreatedAt(),
                     m.getCaptureStartDeadline(), m.getCancelledAt(), roster, view(m),
-                    m.getMode() == MatchMode.CONTROLLED_TEST && m.getCancelledAt() == null && availability.controlledEnabled());
+                    m.getMode() == MatchMode.CONTROLLED_TEST && m.getCancelledAt() == null && m.getDecisionAt() == null && availability.controlledEnabled());
         }).toList();
         return new Listing(summaries, next);
     }
@@ -125,11 +182,13 @@ public class MatchResultService {
                 "reports", reports, "events", events.findByMatchIdOrderByRecordedAtAscIdAsc(id));
     }
 
-    private Result view(MatchEntity match) {
+    Result view(MatchEntity match) {
         availability.requireAvailable(match);
         return new Result(match.getId(), match.getMode().name(), match.getVerificationStatus(), match.getVerificationReason(),
                 match.getOutcomeKind(), match.getWinningTeam(), match.getReportsA(), match.getReportsB(), MatchVerification.QUORUM,
-                match.getVerificationDeadline(), match.getResultVersion(), MatchVerification.POLICY, false);
+                match.getVerificationDeadline(), match.getResultVersion(), MatchVerification.POLICY, false,
+                Set.of("RESOLVED", "VOIDED").contains(match.getVerificationStatus()) ? match.getDecisionReason() : null,
+                Set.of("RESOLVED", "VOIDED").contains(match.getVerificationStatus()) ? match.getDecisionAt() : null);
     }
 
     @Transactional
@@ -151,6 +210,14 @@ public class MatchResultService {
             if (jobs.existsById(report.getId())) jobs.deleteById(report.getId());
         }
         var decision = verification.aggregate(match, reports, now);
+        if (match.getDecisionAt() != null && match.getCancelledAt() == null) {
+            boolean newEvidence = !Objects.equals(match.getDecisionEvidenceIds(), reportIds(reports));
+            if (newEvidence)
+                decision = new MatchVerification.Decision("REVIEW", "LATE_EVIDENCE_AFTER_DECISION", null, null, decision.a(), decision.b());
+            else
+                decision = new MatchVerification.Decision(match.getVerificationStatus(), match.getVerificationReason(),
+                        match.getOutcomeKind(), match.getWinningTeam(), decision.a(), decision.b());
+        }
         String previous = match.getVerificationStatus();
         boolean changed = !previous.equals(decision.status()) || !Objects.equals(match.getVerificationReason(), decision.reason())
                 || !Objects.equals(match.getOutcomeKind(), decision.outcome()) || !Objects.equals(match.getWinningTeam(), decision.winner());
