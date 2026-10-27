@@ -71,6 +71,15 @@ public class WowCharacterLoader {
 
     @Cacheable(cacheNames = "wowCharacters", key = "#key", sync = true)
     public WowAccountProfile loadCharacters(WowCharacterService.CacheKey key, String token, long deadline) {
+        return loadCharacters(token, deadline, NAMESPACES, 60);
+    }
+
+    @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'TBC_ANNIVERSARY_TEST'}", sync = true)
+    public WowAccountProfile loadAnniversaryTestCharacters(WowCharacterService.CacheKey key, String token, long deadline) {
+        return loadCharacters(token, deadline, List.of("profile-classicann-eu", "profile-classicann-us"), 1);
+    }
+
+    private WowAccountProfile loadCharacters(String token, long deadline, List<String> namespaces, int minimumLevel) {
         if (System.nanoTime() >= deadline) {
             throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "Blizzard character loading timed out");
         }
@@ -78,7 +87,7 @@ public class WowCharacterLoader {
         try {
             var accounts = new LinkedHashMap<RegionalAccount, List<WowAccountProfile.WowCharacter>>();
             boolean foundProfile = false;
-            for (String namespace : NAMESPACES) {
+            for (String namespace : namespaces) {
                 WowAccountProfile profile;
                 try {
                     Future<WowAccountProfile> task = submit(() -> client.get()
@@ -101,7 +110,7 @@ public class WowCharacterLoader {
                         throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid response from Blizzard");
                     }
                     var characters = accounts.computeIfAbsent(new RegionalAccount(region(namespace), account.id()), id -> new ArrayList<>());
-                    account.characters().stream().filter(character -> character.level() >= 60)
+                    account.characters().stream().filter(character -> character.level() >= minimumLevel)
                             .map(character -> basicCharacter(character, namespace))
                             .forEach(characters::add);
                 }

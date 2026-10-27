@@ -478,6 +478,60 @@ class WowCharacterServiceTests {
         return calls;
     }
 
+    @Test
+    void anniversaryQueriesItsOwnNamespacesIncludingCharactersBelowPreviewLevel60() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+        var service = service(builder);
+        for (String region : List.of("eu", "us")) {
+            String namespace = "profile-classicann-" + region;
+            String locale = region.equals("eu") ? "en_GB" : "en_US";
+            server.expect(requestTo("https://" + region + ".api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=" + locale))
+                    .andExpect(header("Authorization", "Bearer private-token"))
+                    .andRespond(withSuccess(ownedCharacters(1).replace("\"level\":60", "\"level\":12"), MediaType.APPLICATION_JSON));
+            server.expect(requestTo("https://" + region + ".api.blizzard.com/profile/wow/character/realm/player0/character-media?namespace=" + namespace + "&locale=" + locale))
+                    .andRespond(withResourceNotFound());
+            expectCharacterProfile(server, "player0", namespace, "{}");
+        }
+        var result = service.currentAnniversaryTestCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
+        assertEquals(2, result.wowAccounts().size());
+        assertEquals("profile-classicann-eu", result.wowAccounts().getFirst().characters().getFirst().namespace());
+        assertEquals("profile-classicann-us", result.wowAccounts().getLast().characters().getFirst().namespace());
+        assertTrue(result.wowAccounts().stream().allMatch(a -> a.characters().getFirst().level() == 12));
+        server.verify();
+    }
+
+    @Test
+    void anniversaryCacheIsSeparateFromClassicAndStillRequiresCurrentConsent() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).build();
+        var calls = emptyProfiles(server);
+        var service = service(builder);
+        var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
+        service.currentCharacters(auth);
+        var first = service.currentAnniversaryTestCharacters(auth);
+        assertEquals(6, calls.get());
+        assertSame(first, service.currentAnniversaryTestCharacters(auth));
+        assertEquals(6, calls.get());
+        assertEquals(401, assertThrows(ResponseStatusException.class, () -> service.currentAnniversaryTestCharacters(
+                client(Set.of("wow.profile"), Instant.now().minusSeconds(1)))).getStatusCode().value());
+        assertEquals(403, assertThrows(ResponseStatusException.class, () -> service.currentAnniversaryTestCharacters(
+                client(Set.of("openid"), Instant.now().plusSeconds(60)))).getStatusCode().value());
+        assertEquals(6, calls.get());
+    }
+
+    @Test
+    void anniversaryNeverFallsBackToOtherClassicBranchesAfterProviderFailure() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).build();
+        var service = service(builder);
+        expectMissingProfile(server, "profile-classicann-eu");
+        expectMissingProfile(server, "profile-classicann-us");
+        assertEquals(404, assertThrows(ResponseStatusException.class, () -> service.currentAnniversaryTestCharacters(
+                client(Set.of("wow.profile"), Instant.now().plusSeconds(60)))).getStatusCode().value());
+        server.verify();
+    }
+
     private String ownedCharacters(int count) {
         var characters = new ArrayList<String>();
         for (int i = 0; i < count; i++) characters.add("{\"id\":" + i + ",\"name\":\"Player" + i

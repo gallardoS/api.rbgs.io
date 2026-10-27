@@ -54,4 +54,35 @@ class CaptureCompatibilityTests {
         wrongSchema.put("schemaVersion", 99);
         assertThrows(ResponseStatusException.class, () -> json.evidence(wrongSchema));
     }
+    @Test void anniversary_profile_preserves_provenance_and_rejects_cross_client_maps() throws Exception {
+        var value = payload();
+        var client = CaptureJson.object(value.get("client"));
+        client.putAll(Map.of("product", "wow_anniversary", "adapterVersion", "tbc-anniversary-wsg-test-v1",
+                "gameVersion", "2.5.6", "gameBuild", "70006", "interface", 20506));
+        var map = CaptureJson.object(CaptureJson.object(value.get("capture")).get("map"));
+        map.putAll(Map.of("profile", "TBC_ANNIVERSARY_WSG_TEST", "gameMapId", 489));
+        byte[] before = json.canonical(value);
+        assertDoesNotThrow(() -> json.evidence(value));
+        assertArrayEquals(before, json.canonical(value));
+        map.put("gameMapId", 2997);
+        assertThrows(ResponseStatusException.class, () -> json.evidence(value));
+        map.put("gameMapId", 489);
+        map.put("profile", "DARKSPEAR_DIAGNOSTIC");
+        assertThrows(ResponseStatusException.class, () -> json.evidence(value));
+    }
+
+    @Test void temporary_profile_cannot_become_a_matchmade_or_full_roster_match() {
+        var now = java.time.Instant.now();
+        for (var mode : io.rbgs.api.matches.MatchMode.values()) {
+            for (var policy : io.rbgs.api.matches.MatchEvidencePolicy.values()) {
+                boolean allowed = mode == io.rbgs.api.matches.MatchMode.CONTROLLED_TEST
+                        && policy == io.rbgs.api.matches.MatchEvidencePolicy.CAPTURE_ONLY;
+                org.junit.jupiter.api.function.Executable create = () -> new io.rbgs.api.matches.MatchEntity(
+                        java.util.UUID.randomUUID(), now, now, "[]", mode, policy, "TBC_ANNIVERSARY_WSG_TEST", now);
+                if (allowed) assertDoesNotThrow(create);
+                else assertThrows(IllegalArgumentException.class, create);
+            }
+        }
+    }
+
 }

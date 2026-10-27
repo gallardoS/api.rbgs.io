@@ -5,6 +5,8 @@ import java.util.*;
 
 public enum CaptureProfile {
     DARKSPEAR_DIAGNOSTIC(2997, "wow_classic_beta", Set.of("darkspear-scoreboard-v1", "darkspear-70338-test-1"),
+            Duration.ofMinutes(2), Duration.ofHours(4)),
+    TBC_ANNIVERSARY_WSG_TEST(489, "wow_anniversary", Set.of("tbc-anniversary-wsg-test-v1"),
             Duration.ofMinutes(2), Duration.ofHours(4));
 
     private final long mapId;

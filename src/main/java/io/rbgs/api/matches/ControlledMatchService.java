@@ -38,13 +38,37 @@ public class ControlledMatchService {
 
     @Transactional
     public Map<String,Object> create(Authentication auth,Map<String,Object> request) {
+        return create(auth, request, null);
+    }
+
+    public record SelectedTestCharacter(String namespace, long wowAccountId, long realmId, long characterId,
+            String name, String realm) {}
+
+    @Transactional
+    public Map<String,Object> createAnniversary(Authentication auth, long armMinutes, SelectedTestCharacter selected) {
+        UUID actor = moderator(auth);
+        var row = new LinkedHashMap<String,Object>();
+        row.put("accountId", actor.toString()); row.put("teamKey", null);
+        row.put("character", Map.of("name", selected.name(), "realm", selected.realm()));
+        return create(auth, Map.of("armMinutes", armMinutes, "roster", List.of(row), "testKind", "CAPTURE_ONLY",
+                "expectedMapProfile", CaptureProfile.TBC_ANNIVERSARY_WSG_TEST.name()), selected);
+    }
+
+    private Map<String,Object> create(Authentication auth,Map<String,Object> request,SelectedTestCharacter selected) {
         enabled();
         UUID actor = moderator(auth);
-        fields(request, "armMinutes roster", "testKind");
+        fields(request, "armMinutes roster", "testKind expectedMapProfile");
         ControlledMatchKind kind;
         try { kind = request.containsKey("testKind") ? ControlledMatchKind.valueOf(text(request.get("testKind"))) : ControlledMatchKind.ROSTER_CONTROLLED; }
         catch (IllegalArgumentException error) { throw invalid(); }
         boolean captureOnly = kind == ControlledMatchKind.CAPTURE_ONLY;
+        var profile = request.containsKey("expectedMapProfile")
+                ? CaptureProfile.find(text(request.get("expectedMapProfile"))).orElseThrow(CaptureJson::invalid)
+                : CaptureProfile.DARKSPEAR_DIAGNOSTIC;
+        // Temporary substitute-client observations cannot establish verified outcomes.
+        if (profile == CaptureProfile.TBC_ANNIVERSARY_WSG_TEST && !captureOnly) throw invalid();
+        if (profile == CaptureProfile.TBC_ANNIVERSARY_WSG_TEST && selected == null)
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT, "Select an owned Anniversary character before creating this test");
         long minutes = number(request.get("armMinutes"));
         if (minutes < 5 || minutes > 120) throw invalid();
         List<?> requestedRows = rows(request.get("roster"), captureOnly ? 1 : 2, captureOnly ? 1 : 40);
@@ -70,6 +94,8 @@ public class ControlledMatchService {
             frozen.put("characterId", character.toString());
             frozen.put("character", row.get("character"));
             frozen.put("assignedTeamKey", team);
+            if (selected != null) frozen.put("providerReference", Map.of("namespace", selected.namespace(),
+                    "wowAccountId", selected.wowAccountId(), "realmId", selected.realmId(), "characterId", selected.characterId()));
             roster.add(frozen);
             if (row.get("accountId") != null) {
                 UUID owner = uuid(row.get("accountId"));
@@ -85,7 +111,7 @@ public class ControlledMatchService {
         if ((!captureOnly && teams.size() != 2) || reporters.isEmpty()) throw invalid();
         Instant now = Instant.now(), deadline = now.plusSeconds(minutes * 60);
         var match = matches.saveAndFlush(new MatchEntity(actor, now, deadline, json.encode(roster), MatchMode.CONTROLLED_TEST, kind.evidencePolicy(),
-                CaptureProfile.DARKSPEAR_DIAGNOSTIC.name(), deadline.plus(CaptureProfile.DARKSPEAR_DIAGNOSTIC.maxDuration()).plus(MatchVerification.REPORT_WINDOW)));
+                profile.name(), deadline.plus(profile.maxDuration()).plus(MatchVerification.REPORT_WINDOW)));
         List<Map<String,Object>> issuedAssignments = new ArrayList<>();
         for (var reporter : reporters) {
             var assignment = assignments.saveAndFlush(new MatchAssignmentEntity(match, (UUID)reporter.get("account"), (UUID)reporter.get("character"), (String)reporter.get("team")));

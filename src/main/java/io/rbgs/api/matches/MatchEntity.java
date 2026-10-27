@@ -52,6 +52,9 @@ public class MatchEntity {
         this.mode = java.util.Objects.requireNonNull(mode);
         this.evidencePolicy = java.util.Objects.requireNonNull(evidencePolicy);
         this.profile = java.util.Objects.requireNonNull(profile);
+        if (io.rbgs.api.evidence.CaptureProfile.TBC_ANNIVERSARY_WSG_TEST.name().equals(profile)
+                && (mode != MatchMode.CONTROLLED_TEST || evidencePolicy != MatchEvidencePolicy.CAPTURE_ONLY))
+            throw new IllegalArgumentException("Temporary TBC WSG support is limited to capture-only controlled tests");
     }
 
     public void cancel(Instant at) { if (cancelledAt == null) cancelledAt = at; }

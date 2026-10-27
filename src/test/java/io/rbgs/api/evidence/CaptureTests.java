@@ -51,6 +51,36 @@ class CaptureTests {
  UUID create(){var match=controlled.create(auth(),request());UUID id=(UUID)match.get("matchId");matches.add(id);return (UUID)CaptureJson.object(((List<?>)match.get("assignments")).getFirst()).get("captureId");}
  Map<String,Object> captureOnlyRequest(){var result=new LinkedHashMap<String,Object>(request());var own=new LinkedHashMap<>(CaptureJson.object(((List<?>)result.get("roster")).getFirst()));
   own.put("teamKey",null);result.put("roster",List.of(own));result.put("testKind","CAPTURE_ONLY");return result;}
+ ControlledMatchService.SelectedTestCharacter anniversaryCharacter(){return new ControlledMatchService.SelectedTestCharacter("profile-classicann-eu",7,1,42,"FixturePlayer","FixtureRealm");}
+ @Test void anniversary_test_is_explicit_capture_only_and_old_companions_cannot_consume_its_code()throws Exception {
+  var request=captureOnlyRequest();request.put("expectedMapProfile","TBC_ANNIVERSARY_WSG_TEST");
+  var created=controlled.createAnniversary(auth(),15,anniversaryCharacter());matches.add((UUID)created.get("matchId"));
+  UUID capture=(UUID)CaptureJson.object(((List<?>)created.get("assignments")).getFirst()).get("captureId");
+  var token=token(true);String endpoint="/api/v1/companion/assignments/"+capture+"/issue";
+  mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token()).header("X-RBGS-Capture-Test-Kinds","CAPTURE_ONLY")).andExpect(status().isConflict());
+  assertNull(db.queryForObject("SELECT code_hash FROM rbgs.match_assignments WHERE capture_id=?",String.class,capture));
+  mvc.perform(post(endpoint).header("Authorization","Bearer "+token.token()).header("X-RBGS-Capture-Test-Kinds","CAPTURE_ONLY")
+   .header("X-RBGS-Capture-Test-Profile","TBC_ANNIVERSARY_WSG_TEST")).andExpect(status().isOk())
+   .andExpect(jsonPath("$.assignment.expectedMapProfile").value("TBC_ANNIVERSARY_WSG_TEST"));
+  var roster=new LinkedHashMap<>(request());roster.put("expectedMapProfile","TBC_ANNIVERSARY_WSG_TEST");
+  assertEquals(422,assertThrows(ResponseStatusException.class,()->controlled.create(auth(),roster)).getStatusCode().value());
+ }
+ @Test void anniversary_receipt_preserves_client_is_idempotent_and_never_verifies_a_result()throws Exception {
+  var request=captureOnlyRequest();request.put("expectedMapProfile","TBC_ANNIVERSARY_WSG_TEST");
+  var created=controlled.createAnniversary(auth(),15,anniversaryCharacter());UUID match=(UUID)created.get("matchId");matches.add(match);
+  UUID capture=(UUID)CaptureJson.object(((List<?>)created.get("assignments")).getFirst()).get("captureId");
+  var issued=service.issue(owner.id(),capture,true,"TBC_ANNIVERSARY_WSG_TEST");var value=payload(capture,issued);
+  var reporter=devices.authorize("Bearer "+token(true).token(),"evidence:write");
+  assertEquals(422,assertThrows(ResponseStatusException.class,()->service.ingest(reporter,value)).getStatusCode().value());
+  CaptureJson.object(value.get("client")).putAll(Map.of("product","wow_anniversary","adapterVersion","tbc-anniversary-wsg-test-v1","gameVersion","2.5.6","gameBuild","70006","interface",20506));
+  CaptureJson.object(CaptureJson.object(value.get("capture")).get("map")).putAll(Map.of("profile","TBC_ANNIVERSARY_WSG_TEST","gameMapId",489));
+  var receipt=service.ingest(reporter,value);assertTrue(receipt.durablyStored());
+  assertEquals(receipt.evidenceId(),service.ingest(reporter,value).evidenceId());results.processPending();
+  assertEquals("REVIEW",service.recover(owner.id(),receipt.assignmentId(),capture,receipt.captureRevision()).processingStatus());
+  assertNull(db.queryForObject("SELECT outcome_kind FROM rbgs.matches WHERE id=?",String.class,match));
+  String stored=db.queryForObject("SELECT redacted_payload FROM rbgs.capture_evidence WHERE id=?",String.class,receipt.evidenceId());
+  assertEquals("wow_anniversary",CaptureJson.object(json.parse(stored.getBytes(StandardCharsets.UTF_8)).get("client")).get("product"));
+ }
  @Test void random_bg_capture_uses_one_own_reporter_no_declared_team_and_durable_review_only_receipts()throws Exception {
   var response=mvc.perform(post("/api/v1/moderation/capture-tests").with(oidcLogin().idToken(t->t.issuer(ISSUER).subject(subject))).with(csrf()).contentType("application/json").content(json.encode(captureOnlyRequest())))
    .andExpect(status().isOk()).andExpect(jsonPath("$.testKind").value("CAPTURE_ONLY")).andReturn();

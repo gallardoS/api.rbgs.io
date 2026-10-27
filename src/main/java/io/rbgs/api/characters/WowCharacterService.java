@@ -31,6 +31,14 @@ public class WowCharacterService {
     }
 
     public WowAccountProfile currentCharacters(OAuth2AuthorizedClient authorizedClient) {
+        return currentCharacters(authorizedClient, false);
+    }
+
+    public WowAccountProfile currentAnniversaryTestCharacters(OAuth2AuthorizedClient authorizedClient) {
+        return currentCharacters(authorizedClient, true);
+    }
+
+    private WowAccountProfile currentCharacters(OAuth2AuthorizedClient authorizedClient, boolean anniversaryTest) {
         if (authorizedClient == null || authorizedClient.getAccessToken() == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in with Battle.net again");
         }
@@ -43,7 +51,9 @@ public class WowCharacterService {
         }
         CacheKey key = new CacheKey(authorizedClient.getClientRegistration().getRegistrationId(),
                 authorizedClient.getPrincipalName(), digest(token.getTokenValue()));
-        return loader.loadCharacters(key, token.getTokenValue(), System.nanoTime() + loadTimeout.toNanos());
+        long deadline = System.nanoTime() + loadTimeout.toNanos();
+        return anniversaryTest ? loader.loadAnniversaryTestCharacters(key, token.getTokenValue(), deadline)
+                : loader.loadCharacters(key, token.getTokenValue(), deadline);
     }
 
     private static String digest(String token) {

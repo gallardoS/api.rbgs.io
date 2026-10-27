@@ -34,6 +34,7 @@ public class CaptureService {
             var match = assignment.getMatch();
             var view = new LinkedHashMap<String,Object>();
             view.put("captureId", assignment.getCaptureId());
+            view.put("expectedMapProfile", match.getProfile());
             view.put("assignmentId", assignment.getId());
             view.put("armUntil", match.getCaptureStartDeadline());
             view.put("codeIssued", assignment.getIssuedAt() != null);
@@ -53,8 +54,15 @@ public class CaptureService {
     }
     @Transactional
     public Map<String,Object> issue(UUID account,UUID capture,boolean captureOnlySupported) {
+        return issue(account, capture, captureOnlySupported, null);
+    }
+    @Transactional
+    public Map<String,Object> issue(UUID account,UUID capture,boolean captureOnlySupported,String testProfile) {
         var assignment = owned(account, capture, true);
         var match = assignment.getMatch();
+        if (CaptureProfile.TBC_ANNIVERSARY_WSG_TEST.name().equals(match.getProfile())
+                && !match.getProfile().equals(testProfile))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Update the companion before getting a WSG test command");
         if (match.getEvidencePolicy() == MatchEvidencePolicy.CAPTURE_ONLY && !captureOnlySupported) throw new ResponseStatusException(HttpStatus.CONFLICT, "Update the companion before getting a command for this match");
         if (assignment.getCodeHash() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "The match command was already created. If you no longer have it, request a new match.");
         if (match.getCancelledAt() != null || !Instant.now().isBefore(match.getCaptureStartDeadline())) throw new ResponseStatusException(HttpStatus.GONE, "This match is no longer available. Request a new one.");
@@ -87,6 +95,10 @@ public class CaptureService {
     public Receipt ingest(DeviceService.Status reporter,Map<String,Object> request) {
         json.evidence(request);UUID capture=uuid(request.get("captureId"));var a=owned(reporter.accountId(),capture,true);
         if(!uuid(request.get("assignmentId")).equals(a.getId())||!uuid(request.get("matchId")).equals(a.getMatch().getId()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This saved data does not belong to the assigned match");
+        var profile=CaptureProfile.find(a.getMatch().getProfile()).orElseThrow(CaptureJson::invalid);
+        var map=object(request.get("capture")).get("map");
+        if(!profile.accepts(object(request.get("client"))) || map!=null && !profile.name().equals(object(map).get("profile")))
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT,"The saved client or map profile does not match this test");
         String codeHash=sha(text(request.get("assignmentCode")).getBytes(StandardCharsets.UTF_8));if(!codeHash.equals(a.getCodeHash()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"The command in this saved data does not match the assigned match");
         int revision=(int)number(request.get("captureRevision"));String contentHash=sha(json.canonical(request));
         var previous=evidence.findByAccountIdAndAssignmentIdAndCaptureIdAndRevision(reporter.accountId(),a.getId(),capture,revision);

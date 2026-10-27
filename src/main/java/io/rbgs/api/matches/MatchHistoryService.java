@@ -82,7 +82,11 @@ public class MatchHistoryService {
             else if (assignment.getAssignedTeam() == null) perspective = "REVIEW";
             else perspective = assignment.getAssignedTeam().equals(match.getWinningTeam()) ? "WIN" : "LOSS";
         }
-        String map = "DARKSPEAR_DIAGNOSTIC".equals(match.getProfile()) ? "Darkspear Islands" : null;
+        String map = switch (match.getProfile()) {
+            case "DARKSPEAR_DIAGNOSTIC" -> "Darkspear Islands";
+            case "TBC_ANNIVERSARY_WSG_TEST" -> "Warsong Gulch";
+            default -> null;
+        };
         return new Item(match.getId(), match.getCreatedAt(), match.getMode().name(), match.getEvidencePolicy().name(), map,
                 new Character((String)identity.get("name"), (String)identity.get("realm")), assignment.getAssignedTeam(), perspective,
                 results.view(match), thread == null ? null : thread.getStatus(), unreadResult || (thread != null && thread.unread()), match.getCancelledAt() != null);

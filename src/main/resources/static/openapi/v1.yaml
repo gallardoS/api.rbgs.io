@@ -438,6 +438,7 @@ paths:
               properties:
                 armMinutes: { type: integer, minimum: 5, maximum: 120 }
                 testKind: { type: string, enum: [ROSTER_CONTROLLED, CAPTURE_ONLY], default: ROSTER_CONTROLLED }
+                expectedMapProfile: { type: string, enum: [DARKSPEAR_DIAGNOSTIC], default: DARKSPEAR_DIAGNOSTIC, description: "Temporary TBC WSG tests require the separate Anniversary endpoint with an owned character selection." }
                 roster:
                   type: array
                   minItems: 1
@@ -478,6 +479,59 @@ paths:
         '422': { description: "Invalid or unsupported roster" }
         '429': { description: "Retry-After 60 seconds" }
         '503': { description: "Controlled capture testing disabled" }
+  /moderation/capture-tests/anniversary/characters:
+    get:
+      operationId: getOwnAnniversaryTestCharacters
+      summary: Load own Anniversary characters for temporary moderator tests
+      description: Requires current active MODERATOR, controlled capture enabled and the web account's Battle.net authorization with wow.profile. Queries profile-classicann-eu and profile-classicann-us only. No normal season or ranked eligibility is established. Characters from level 1 are returned for test selection, without the ordinary preview's level-60 filter; game access is separate. Cache is isolated by account, token digest and test environment, with 60-second TTL. Expired tokens and missing scope fail before cached data. Optional media/profile failures preserve the authenticated basic list. Returns no-store.
+      security: [{ webSession: [] }]
+      responses:
+        '200':
+          description: Own Anniversary account profile; no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WowAccountProfile' }
+        '401': { description: Battle.net login expired or unavailable }
+        '403': { description: Active moderator and wow.profile access required }
+        '404': { description: No accessible Anniversary account profile in EU or NA }
+        '502': { description: Invalid or unavailable Blizzard response; no Classic fallback }
+        '503': { description: Controlled testing disabled or character loader busy }
+        '504': { description: Blizzard ownership query timed out }
+  /moderation/capture-tests/anniversary:
+    post:
+      operationId: createAnniversaryCaptureTest
+      summary: Create a temporary WSG capture test with a selected owned Anniversary character
+      description: Current active MODERATOR, web session, CSRF and controlled capture flag required. The server resolves the full provider reference against the same account's authenticated Anniversary list (including its bounded cache). It freezes provider-resolved name/realm and provider reference in the expected roster. No caller-supplied name, realm, account UUID, teams or roster is accepted. Unknown, disappeared, wrong-namespace or ambiguous references return 422. Creates CONTROLLED_TEST / CAPTURE_ONLY / TBC_ANNIVERSARY_WSG_TEST only, with no verified winner, normal eligibility or rating. Ten starts per moderator per minute. The generic capture-tests route cannot bypass this selection.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [armMinutes, character]
+              properties:
+                armMinutes: { type: integer, minimum: 5, maximum: 120 }
+                character:
+                  type: object
+                  additionalProperties: false
+                  required: [namespace, wowAccountId, realmId, characterId]
+                  properties:
+                    namespace: { type: string, enum: [profile-classicann-eu, profile-classicann-us] }
+                    wowAccountId: { type: integer, minimum: 0, maximum: 9007199254740991 }
+                    realmId: { type: integer, minimum: 0, maximum: 9007199254740991 }
+                    characterId: { type: integer, minimum: 0, maximum: 9007199254740991 }
+      responses:
+        '200': { description: Created test and own assignment IDs; no-store; no plaintext command }
+        '401': { description: Battle.net login expired or unavailable }
+        '403': { description: Active moderator, CSRF and wow.profile access required }
+        '404': { description: No accessible Anniversary profile }
+        '422': { description: Missing, unsupported, stale or ambiguous character selection }
+        '429': { description: Retry in one minute }
+        '502': { description: Blizzard profile query failed; no declaration fallback }
+        '503': { description: Controlled testing disabled or loader busy }
+        '504': { description: Blizzard ownership query timed out }
   /moderation/capture-tests/{id}/cancel:
     post:
       operationId: cancelControlledCaptureTest
@@ -636,7 +690,7 @@ paths:
   /companion/assignments/{captureId}:
     get:
       operationId: getOwnCaptureAssignment
-      description: Requires companion:assignments. Frozen schema-2 descriptor contains match/assignment/capture UUIDs, assignedCharacterId, assignedTeamKey A/B, rosterVersion 1, mode CONTROLLED_TEST, expectedMapProfile DARKSPEAR_DIAGNOSTIC, expectedRoster, issuedAt, armUntil and assignmentCodeSha256. CAPTURE_ONLY descriptors additionally carry testKind CAPTURE_ONLY, assignedTeamKey null and exactly one expectedRoster row containing only the declared own character with assignedTeamKey null. This row is a reporter declaration, not an expected game roster. Legacy roster descriptors keep their original shape. Older companions reject the new variant safely and must be updated before issuing a capture-only code. Never returns the plaintext code. Readable after expiry/cancellation for evidence recovery.
+      description: Requires companion:assignments. Frozen schema-2 descriptor contains match/assignment/capture UUIDs, assignedCharacterId, assignedTeamKey A/B, rosterVersion 1, mode CONTROLLED_TEST, expectedMapProfile DARKSPEAR_DIAGNOSTIC or TBC_ANNIVERSARY_WSG_TEST (CAPTURE_ONLY only), expectedRoster, issuedAt, armUntil and assignmentCodeSha256. CAPTURE_ONLY descriptors additionally carry testKind CAPTURE_ONLY, assignedTeamKey null and exactly one expectedRoster row containing only the declared own character with assignedTeamKey null. This row is a reporter declaration, not an expected game roster. Legacy roster descriptors keep their original shape. Older companions reject the new variant safely and must be updated before issuing a capture-only code. Never returns the plaintext code. Readable after expiry/cancellation for evidence recovery.
       security: [{ deviceCredential: [] }]
       parameters:
         - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
@@ -651,6 +705,7 @@ paths:
       security: [{ deviceCredential: [] }]
       parameters:
         - { in: header, name: X-RBGS-Capture-Test-Kinds, required: false, schema: { type: string, enum: [CAPTURE_ONLY] } }
+        - { in: header, name: X-RBGS-Capture-Test-Profile, required: false, schema: { type: string, enum: [TBC_ANNIVERSARY_WSG_TEST] }, description: "Required for temporary TBC WSG issuance. Unsupported clients receive 409 before consuming the code." }
         - { in: path, name: captureId, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: "Own plaintext code issued once" }
@@ -660,7 +715,7 @@ paths:
   /evidence:
     post:
       operationId: storeCaptureEvidence
-      description: Native bearer evidence:write only; no web cookie authorization. Strict schema 2, at most 256 KiB, 40 score rows, depth 30, duplicate JSON keys rejected. Root requires schemaVersion, matchId, assignmentId, captureId, captureRevision, assignmentCode, client, observedCharacter, capture. Only wow_classic_beta with the darkspear-scoreboard-v1 adapter or its legacy darkspear-70338-test-1 identifier is accepted. Game version, build and positive interface are retained as bounded metadata rather than patch allowlists; the supported map and data shape remain enforced. Nullable Lua members must become explicit JSON null. Canonical UTF-8 uses sorted object keys, ordered arrays and nonnegative safe integers. Identity/stats remain observations. Idempotency key is account/assignment/capture/revision; different canonical content returns 409. Evidence and processing job commit before receipt. Stored report replaces plaintext assignmentCode with assignmentCodeSha256, preserving other members; submitted/stored hashes are separate. For compatibility the receipt processingStatus still advances from PENDING to REVIEW after processing; authoritative match verification is exposed separately by the result routes. Delayed uploads are evaluated against assignment and game timing, never upload expiry alone; cancelled reports remain review evidence. No rating is applied. Sixty writes per account per minute.
+      description: Native bearer evidence:write only; no web cookie authorization. Strict schema 2, at most 256 KiB, 40 score rows, depth 30, duplicate JSON keys rejected. Root requires schemaVersion, matchId, assignmentId, captureId, captureRevision, assignmentCode, client, observedCharacter, capture. Accepts wow_classic_beta with darkspear-scoreboard-v1 or legacy darkspear-70338-test-1, and temporary wow_anniversary with tbc-anniversary-wsg-test-v1 for map 489 / TBC_ANNIVERSARY_WSG_TEST. Client and map profile must match the frozen assignment; TBC WSG tests are CAPTURE_ONLY and cannot verify outcomes or apply rating. Game version, build and positive interface are retained as bounded metadata rather than patch allowlists; the supported map and data shape remain enforced. Nullable Lua members must become explicit JSON null. Canonical UTF-8 uses sorted object keys, ordered arrays and nonnegative safe integers. Identity/stats remain observations. Idempotency key is account/assignment/capture/revision; different canonical content returns 409. Evidence and processing job commit before receipt. Stored report replaces plaintext assignmentCode with assignmentCodeSha256, preserving other members; submitted/stored hashes are separate. For compatibility the receipt processingStatus still advances from PENDING to REVIEW after processing; authoritative match verification is exposed separately by the result routes. Delayed uploads are evaluated against assignment and game timing, never upload expiry alone; cancelled reports remain review evidence. No rating is applied. Sixty writes per account per minute.
       security: [{ deviceCredential: [] }]
       requestBody:
         required: true
@@ -679,7 +734,7 @@ paths:
                 assignmentCode: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{16}$' }
                 client: { type: object, description: "Exact addonVersion, adapterVersion, product, gameVersion, gameBuild, interface and companionVersion members" }
                 observedCharacter: { $ref: '#/components/schemas/CaptureIdentity' }
-                capture: { type: object, description: "Exact state, stage, continuity, incompleteReason, map, startedAt, endedAt, roster and outcome members; COMPLETE requires continuous final data on map 2997" }
+                capture: { type: object, description: "Exact state, stage, continuity, incompleteReason, map, startedAt, endedAt, roster and outcome members; COMPLETE requires continuous final data on the client/profile map (2997 for Darkspear, 489 for the temporary TBC WSG test)" }
       responses:
         '200':
           description: Durable receipt; storage does not imply match verification
@@ -1495,8 +1550,8 @@ components:
           description: Optional guild from the character profile; null when unguilded or unavailable.
         namespace:
           type: string
-          enum: [profile-classic1x-eu, profile-classic-eu, profile-classic1x-us, profile-classic-us]
-          description: Source Classic branch and region; part of the character's identity alongside account, realm and character IDs. The web displays us as NA.
+          enum: [profile-classic1x-eu, profile-classic-eu, profile-classic1x-us, profile-classic-us, profile-classicann-eu, profile-classicann-us]
+          description: Source branch and region, part of identity alongside account/realm/character IDs. Anniversary namespaces are returned only by the temporary moderator test endpoint; the ordinary preview is unchanged. The web displays us as NA.
         avatarUrl:
           type: [string, 'null']
           format: uri
@@ -1512,7 +1567,8 @@ components:
           type: string
         level:
           type: integer
-          minimum: 60
+          minimum: 1
+          description: Ordinary Classic preview filters to level 60 and above; temporary Anniversary test selection includes level 1 and above without asserting battleground eligibility.
         realm:
           type: object
           properties:
