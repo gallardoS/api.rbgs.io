@@ -132,4 +132,24 @@ class CaptureCompatibilityTests {
         assertThrows(ResponseStatusException.class, () -> json.evidence(value));
     }
 
+    @Test void optional_flag_statistics_preserve_zero_and_absence_and_reject_invalid_numbers() throws Exception {
+        var value = payload();
+        var row = CaptureJson.object(((java.util.List<?>)CaptureJson.object(value.get("capture")).get("roster")).getFirst());
+        row.put("flagsCaptured", 0);
+        row.put("flagsReturned", 3);
+        byte[] before = json.canonical(value);
+        assertDoesNotThrow(() -> json.evidence(value));
+        assertArrayEquals(before, json.canonical(value));
+        for(String key : java.util.List.of("flagsCaptured", "flagsReturned")) {
+            for(Object bad : java.util.List.of(-1, 9007199254740992L, "3", 1.5, true)) {
+                row.put(key, bad);
+                assertThrows(ResponseStatusException.class, () -> json.evidence(value));
+            }
+            row.put(key, null);
+            assertDoesNotThrow(() -> json.evidence(value));
+            row.remove(key);
+            assertDoesNotThrow(() -> json.evidence(value));
+        }
+    }
+
 }

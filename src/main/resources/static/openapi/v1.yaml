@@ -1339,13 +1339,15 @@ components:
                     - { type: 'null' }
                     - type: object
                       description: Own immutable scoreboard observations; unknowns remain null
-                      required: [killingBlows, deaths, honorableKills, damage, healing]
+                      required: [killingBlows, deaths, honorableKills, damage, healing, flagsCaptured, flagsReturned]
                       properties:
                         killingBlows: { type: [integer, 'null'], minimum: 0 }
                         deaths: { type: [integer, 'null'], minimum: 0 }
                         honorableKills: { type: [integer, 'null'], minimum: 0 }
                         damage: { type: [integer, 'null'], minimum: 0 }
                         healing: { type: [integer, 'null'], minimum: 0 }
+                        flagsCaptured: { type: [integer, 'null'], minimum: 0 }
+                        flagsReturned: { type: [integer, 'null'], minimum: 0 }
         dispute:
           oneOf:
             - { type: 'null' }

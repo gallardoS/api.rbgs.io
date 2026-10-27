@@ -84,9 +84,9 @@ public class CaptureJson {
             profile = CaptureProfile.find(text(map.get("profile"))).orElseThrow(CaptureJson::invalid);
             if(!profile.accepts(client))throw invalid();text(map.get("observedName"));if(map.get("gameMapId")!=null)number(map.get("gameMapId"));}
         List<?> roster=rows(c.get("roster"),0,40);
-        for(Object item:roster){var row=object(item);fields(row,"character observedTeamKey","killingBlows honorableKills deaths damage healing");identity(row.get("character"));
+        for(Object item:roster){var row=object(item);fields(row,"character observedTeamKey","killingBlows honorableKills deaths damage healing flagsCaptured flagsReturned");identity(row.get("character"));
             if(row.get("observedTeamKey")!=null&&!Set.of("0","1").contains(text(row.get("observedTeamKey"))))throw invalid();
-            for(String key:List.of("killingBlows","honorableKills","deaths","damage","healing"))if(row.get(key)!=null)number(row.get(key));}
+            for(String key:List.of("killingBlows","honorableKills","deaths","damage","healing","flagsCaptured","flagsReturned"))if(row.get(key)!=null)number(row.get(key));}
         var outcome=object(c.get("outcome"));fields(outcome,"kind winningObservedTeamKey","rawWinner");String kind=text(outcome.get("kind"));
         if(outcome.get("rawWinner")!=null)text(outcome.get("rawWinner"));
         if(kind.equals("WIN")){if(!Set.of("0","1").contains(text(outcome.get("winningObservedTeamKey"))))throw invalid();}

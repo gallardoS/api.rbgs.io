@@ -33,7 +33,7 @@ public class MatchHistoryService {
             String disputeStatus, boolean unread, boolean cancelled) {}
     public record Page(List<Item> items, String nextCursor) {}
     public record Player(String name, String realm, String team, boolean you) {}
-    public record Stats(Long killingBlows, Long deaths, Long honorableKills, Long damage, Long healing) {}
+    public record Stats(Long killingBlows, Long deaths, Long honorableKills, Long damage, Long healing, Long flagsCaptured, Long flagsReturned) {}
     public record Capture(Instant startedAt, Instant endedAt, Long durationSeconds, Stats stats,
             String delivery, String product, String build, int revision) {}
     public record Update(UUID id, Instant at, String status, String reason, String explanation, String outcome, String winningTeam) {}
@@ -141,7 +141,7 @@ public class MatchHistoryService {
                 }).toList();
                 if (matching.size() == 1) {
                     var row = matching.getFirst();
-                    stats = new Stats(stat(row.get("killingBlows")), stat(row.get("deaths")), stat(row.get("honorableKills")), stat(row.get("damage")), stat(row.get("healing")));
+                    stats = new Stats(stat(row.get("killingBlows")), stat(row.get("deaths")), stat(row.get("honorableKills")), stat(row.get("damage")), stat(row.get("healing")), stat(row.get("flagsCaptured")), stat(row.get("flagsReturned")));
                 }
             }
             return new Capture(start, end, duration, stats, "RECEIVED", (String)client.get("product"), String.valueOf(client.get("build")), report.getRevision());
