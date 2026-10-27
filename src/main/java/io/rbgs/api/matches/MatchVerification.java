@@ -50,6 +50,8 @@ public class MatchVerification {
             json.evidence(shape);
             var capture = object(report.get("capture"));
             if (!"COMPLETE".equals(capture.get("state"))) return Validation.fail("INCOMPLETE", "CAPTURE_INCOMPLETE");
+            if (!"CONTINUOUS".equals(capture.get("continuity")))
+                return Validation.fail("UNVERIFIABLE", "CAPTURE_INTERRUPTED");
             var map = object(capture.get("map"));
             if (!match.getProfile().equals(map.get("profile")) || number(map.get("gameMapId")) != profile.mapId()
                     || !profile.accepts(object(report.get("client"))))

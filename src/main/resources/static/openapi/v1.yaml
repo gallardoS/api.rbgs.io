@@ -734,7 +734,7 @@ paths:
                 assignmentCode: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{16}$' }
                 client: { type: object, description: "Exact addonVersion, adapterVersion, product, gameVersion, gameBuild, interface and companionVersion members" }
                 observedCharacter: { $ref: '#/components/schemas/CaptureIdentity' }
-                capture: { type: object, description: "Exact state, stage, continuity, incompleteReason, map, startedAt, endedAt, roster and outcome members; COMPLETE requires continuous final data on the client/profile map (2997 for Darkspear, 489 for the temporary TBC WSG test)" }
+                capture: { type: object, description: "Exact state, stage, continuity, incompleteReason, map, startedAt, endedAt, roster and outcome members, plus optional interruptions. COMPLETE requires a fresh final scoreboard on the client/profile map (2997 for Darkspear, 489 for the temporary TBC WSG test). Continuity is CONTINUOUS, RESUMED or UNKNOWN. RESUMED requires 1-32 ordered interruption objects with Unix-second before/after values and gaps of at most 120 seconds; it cannot satisfy automatic full-roster verification. UNKNOWN cannot be COMPLETE." }
       responses:
         '200':
           description: Durable receipt; storage does not imply match verification

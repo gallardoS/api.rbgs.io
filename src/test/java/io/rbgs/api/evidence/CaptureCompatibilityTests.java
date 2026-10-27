@@ -85,4 +85,51 @@ class CaptureCompatibilityTests {
         }
     }
 
+    @Test void resumed_capture_is_retained_but_cannot_satisfy_full_roster_verification() throws Exception {
+        var report = payload();
+        var capture = CaptureJson.object(report.get("capture"));
+        capture.put("continuity", "RESUMED");
+        capture.put("interruptions", java.util.List.of(Map.of("before", 1791734400L, "after", 1791734410L)));
+        report.remove("assignmentCode");
+        report.put("assignmentCodeSha256", "fixture-hash");
+        var assignment = org.mockito.Mockito.mock(io.rbgs.api.matches.MatchAssignmentEntity.class);
+        org.mockito.Mockito.when(assignment.getId()).thenReturn(CaptureJson.uuid(report.get("assignmentId")));
+        org.mockito.Mockito.when(assignment.getCaptureId()).thenReturn(CaptureJson.uuid(report.get("captureId")));
+        org.mockito.Mockito.when(assignment.getCodeHash()).thenReturn("fixture-hash");
+        var match = org.mockito.Mockito.mock(io.rbgs.api.matches.MatchEntity.class);
+        org.mockito.Mockito.when(match.getId()).thenReturn(CaptureJson.uuid(report.get("matchId")));
+        org.mockito.Mockito.when(match.getEvidencePolicy()).thenReturn(io.rbgs.api.matches.MatchEvidencePolicy.FULL_ROSTER);
+        org.mockito.Mockito.when(match.getProfile()).thenReturn("DARKSPEAR_DIAGNOSTIC");
+        byte[] stored = json.canonical(report);
+        var evidence = new CaptureEvidenceEntity(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), assignment,
+                ((Number)report.get("captureRevision")).intValue(), java.time.Instant.now(), CaptureJson.sha(stored),
+                CaptureJson.sha(stored), new String(stored, java.nio.charset.StandardCharsets.UTF_8), null);
+        var result = new io.rbgs.api.matches.MatchVerification(json).normalize(match, evidence);
+        assertEquals("UNVERIFIABLE", result.status());
+        assertEquals("CAPTURE_INTERRUPTED", result.reason());
+        assertEquals(new String(stored, java.nio.charset.StandardCharsets.UTF_8), evidence.getRedactedPayload());
+    }
+
+    @Test void resumed_final_preserves_interruption_and_requires_bounded_ordered_gaps() throws Exception {
+        var value = payload();
+        var capture = CaptureJson.object(value.get("capture"));
+        capture.put("continuity", "RESUMED");
+        assertThrows(ResponseStatusException.class, () -> json.evidence(value));
+        capture.put("interruptions", java.util.List.of(Map.of("before", 1791734400L, "after", 1791734410L)));
+        byte[] before = json.canonical(value);
+        assertDoesNotThrow(() -> json.evidence(value));
+        assertArrayEquals(before, json.canonical(value));
+        for (Object gaps : java.util.List.of(java.util.List.of(),
+                java.util.List.of(Map.of("before", 100, "after", 99)),
+                java.util.List.of(Map.of("before", 100, "after", 221)),
+                java.util.List.of(Map.of("before", 100, "after", 110), Map.of("before", 105, "after", 115)),
+                java.util.Collections.nCopies(33, Map.of("before", 100, "after", 110)))) {
+            capture.put("interruptions", gaps);
+            assertThrows(ResponseStatusException.class, () -> json.evidence(value));
+        }
+        capture.put("interruptions", java.util.List.of(Map.of("before", 100, "after", 110)));
+        capture.put("continuity", "CONTINUOUS");
+        assertThrows(ResponseStatusException.class, () -> json.evidence(value));
+    }
+
 }

@@ -64,10 +64,20 @@ public class CaptureJson {
                 ||!text(client.get("gameBuild")).matches("[0-9]{1,10}")||!text(client.get("gameBuild")).matches(".*[1-9].*")
                 ||number(client.get("interface"))==0)throw invalid();
         identity(root.get("observedCharacter"));
-        Map<String,Object> c=object(root.get("capture"));fields(c,"state stage continuity incompleteReason map startedAt endedAt roster outcome","");
+        Map<String,Object> c=object(root.get("capture"));fields(c,"state stage continuity incompleteReason map startedAt endedAt roster outcome","interruptions");
         String state=text(c.get("state")),stage=text(c.get("stage")),continuity=text(c.get("continuity"));
         if(!Set.of("COMPLETE","INCOMPLETE").contains(state)||!Set.of("ARMED","RECORDING","FINAL_PENDING","COMPLETE","INCOMPLETE").contains(stage)
-                ||!Set.of("CONTINUOUS","UNKNOWN").contains(continuity))throw invalid();
+                ||!Set.of("CONTINUOUS","UNKNOWN","RESUMED").contains(continuity))throw invalid();
+        if(c.containsKey("interruptions")) {
+            if(continuity.equals("CONTINUOUS"))throw invalid();
+            long previous=0;
+            for(Object item:rows(c.get("interruptions"),1,32)) {
+                var gap=object(item);fields(gap,"before after","");
+                long before=number(gap.get("before")),after=number(gap.get("after"));
+                if(before<previous||after<before||after-before>120)throw invalid();
+                previous=after;
+            }
+        } else if(continuity.equals("RESUMED"))throw invalid();
         for(String key:List.of("startedAt","endedAt"))if(c.get(key)!=null)timestamp(c.get(key));
         CaptureProfile profile = null;
         if(c.get("map")!=null){var map=object(c.get("map"));fields(map,"profile observedName gameMapId","");
@@ -82,7 +92,7 @@ public class CaptureJson {
         if(kind.equals("WIN")){if(!Set.of("0","1").contains(text(outcome.get("winningObservedTeamKey"))))throw invalid();}
         else if(!Set.of("UNKNOWN","DRAW").contains(kind)||outcome.get("winningObservedTeamKey")!=null)throw invalid();
         if(state.equals("COMPLETE")) {
-            if(!stage.equals("COMPLETE")||!continuity.equals("CONTINUOUS")||c.get("incompleteReason")!=null||c.get("map")==null
+            if(!stage.equals("COMPLETE")||continuity.equals("UNKNOWN")||c.get("incompleteReason")!=null||c.get("map")==null
                     ||c.get("startedAt")==null||c.get("endedAt")==null||roster.isEmpty()||kind.equals("UNKNOWN")
                     ||profile==null||profile.mapId()!=number(object(c.get("map")).get("gameMapId")))throw invalid();
         } else {
