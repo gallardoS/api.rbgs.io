@@ -6,6 +6,284 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /me/play-character:
+    get:
+      operationId: getOwnPlayCharacter
+      security: [{ webSession: [] }]
+      summary: Read the current account's selected Play character
+      description: Private no-store preference, independent of a season or connected desktop app. Returns an empty body before the first selection. Initializes the CSRF cookie. This is a verified Classic picker reference, not Forever ownership or queue eligibility.
+      responses:
+        '200':
+          description: Selected character or empty body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlayCharacterSelected' }
+        '401': { description: Sign in required }
+        '403': { description: Account unavailable }
+    put:
+      operationId: selectOwnPlayCharacter
+      security: [{ webSession: [] }]
+      summary: Select an owned level-60+ Play character and derive its region
+      description: Requires CSRF and the current user's Battle.net wow.profile authorization. Resolves exactly one complete provider reference from the bounded authenticated character list before starting a database transaction. Names, realms and EU/NA region are server-derived; callers cannot supply a lobby region. Serializes with lobby admission under the account lock. A grouped player may change characters only within the fixed lobby region; leave first to change regions. Identical selections avoid writes and events. Changes notify lobby peers through SSE. Requires neither a season nor a desktop device; competitive selections remain separate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlayCharacterReference' }
+      responses:
+        '200':
+          description: Verified selected character; no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlayCharacterSelected' }
+        '400': { description: Incomplete or unsupported reference }
+        '401': { description: Sign in or renew Battle.net authorization }
+        '403': { description: Account, CSRF or wow.profile permission unavailable }
+        '409': { description: Character belongs to another lobby region; existing selection is retained }
+        '422': { description: Reference does not resolve to exactly one owned level-60+ character }
+        '502': { description: Blizzard unavailable }
+        '504': { description: Character lookup timed out }
+  /me/group-events:
+    get:
+      operationId: streamOwnLobbyChanges
+      security: [{ webSession: [] }]
+      summary: Subscribe to private lobby invalidations
+      description: >-
+        SSE for the current active account, including incoming invitations before joining a group.
+        Events ready, changed and ping carry only {}. On every ready, fetch the authenticated group,
+        invitation and play-context snapshots; events have no replay IDs. Ready advertises a 3000ms
+        reconnect delay. Ping runs every 15 seconds and revalidates the stored session and account.
+        Streams close after five minutes and reconnect normally. PostgreSQL transactional notifications
+        synchronize API instances; rollback never publishes a change. No lobby is created by subscribing.
+        At most four streams per account and 1024 per instance by default. SoloQ and hidden pages
+        unsubscribe. While connected the web retains a 60-second health refresh; disconnected clients
+        use the existing 15/60-second adaptive polling. This does not enter a matchmaking queue.
+      responses:
+        '200':
+          description: Private SSE stream; no-store and X-Accel-Buffering no
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            X-Accel-Buffering: { schema: { type: string, const: 'no' } }
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: "event:ready\nretry:3000\ndata:{}\n\n"
+        '401': { description: Sign in with a live web session }
+        '403': { description: Account unavailable }
+        '429': { description: Account stream limit reached }
+        '503': { description: Instance stream capacity reached }
+  /me/group:
+    get:
+      operationId: getOwnPremadeGroup
+      security: [{ webSession: [] }]
+      summary: Read the current account's private premade lobby
+      description: Returns an empty body when not a member. All group responses use no-store. A live account and web session are required; reading initializes the CSRF cookie. No public group directory exists.
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '401': { description: Sign in required }
+        '403': { description: Account unavailable }
+  /me/group-invitations:
+    get:
+      operationId: getOwnGroupInvitations
+      security: [{ webSession: [] }]
+      summary: Read unexpired invitations addressed to the authenticated account
+      responses:
+        '200':
+          description: Private invitation list; no-store
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/GroupInvitation' } }
+  /groups:
+    post:
+      operationId: createPremadeGroup
+      security: [{ webSession: [] }]
+      summary: Create a lobby or recover the current account's existing lobby
+      description: Requires X-XSRF-TOKEN matching the CSRF cookie. Requires a previously selected Play character. The lobby region is fixed from that verified character, independent of account region. Repeated and concurrent calls return existing membership without changing captain, region, code or roster. New membership rejects active matches and unresolved competitive results; expired CONTROLLED_TEST/CAPTURE_ONLY diagnostics past their verification deadline do not reserve an account and remain in history/review. Initializes a SecureRandom eight-character lobby code (40 bits) for a new group, with serialized collision retries. Does not enter a queue.
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '409': { description: Select a Play character first, resolve an active match/competitive result, or reload a changed group }
+  /groups/join:
+    post:
+      operationId: joinPremadeByCode
+      security: [{ webSession: [] }]
+      summary: Join an open lobby with a shared code
+      description: Requires CSRF. Joining the same lobby is idempotent. A valid code for another lobby atomically transfers the caller after selected-character region, capacity/account/match checks, retaining the current lobby on failure. Source captain departure promotes the oldest remaining member; only an empty source is deleted. Locks both groups in stable order before the account and retries if membership changed. Role labels and membership seniority reset. No queue admission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, minLength: 1, maxLength: 64, description: Eight-character lobby code from ABCDEFGHJKLMNPQRSTUVWXYZ23456789; case-insensitive with surrounding whitespace stripped. Invalid formats consume the join-attempt limit and return 404. }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '404': { description: Invalid, disabled, superseded code or closed lobby; ask captain for a current code }
+        '409': { description: Full lobby, other group membership or unresolved match }
+        '429': { description: Wait one minute before another code attempt }
+  /groups/{id}/code:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }]
+    post:
+      operationId: managePremadeLobbyCode
+      security: [{ webSession: [] }]
+      summary: Captain regenerates or disables the shared code
+      description: Requires CSRF. enabled=true always generates a fresh code; enabled=false disables code entry. Previous codes stop admitting members. Does not change roster revision or confirmation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/GroupRevision' }
+                - type: object
+                  required: [enabled]
+                  properties:
+                    enabled: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '403': { description: Only captain may change the code }
+        '409': { description: Stale roster revision }
+
+  /groups/{id}/invitations:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }]
+    post:
+      operationId: invitePremadePlayer
+      security: [{ webSession: [] }]
+      summary: Captain invites a registered active player's full BattleTag
+      description: Requires CSRF. Thirty-minute expiry; at most twenty live invitations per group. An exact unambiguous active account must match. Renews an existing invitation for the same account. Does not change roster revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/GroupRevision' }
+                - type: object
+                  required: [battleTag]
+                  properties:
+                    battleTag: { type: string, maxLength: 100, pattern: '^[^\p{Cntrl}]+#[0-9]+$' }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '409': { description: Stale group, unknown BattleTag, full group, invitation limit, existing membership or unresolved match }
+  /me/group-invitations/{invitationId}/accept:
+    parameters: [{ $ref: '#/components/parameters/GroupInvitationId' }]
+    post:
+      operationId: acceptGroupInvitation
+      security: [{ webSession: [] }]
+      summary: Authenticated recipient accepts their invitation
+      description: Requires CSRF. Locks the group and the joining account, enforcing ten distinct accounts and unique membership across groups/devices. All other invitations addressed to the new member are deleted. Bumps roster revision. Does not confirm readiness or enter a queue.
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '404': { description: Invitation absent or belongs to another account }
+        '409': { description: Expired invitation, full group, existing membership or unresolved match }
+  /me/group-invitations/{invitationId}/decline:
+    parameters: [{ $ref: '#/components/parameters/GroupInvitationId' }]
+    post:
+      operationId: declineGroupInvitation
+      security: [{ webSession: [] }]
+      summary: Recipient declines an invitation
+      description: Requires CSRF.
+      responses:
+        '200': { description: Invitation removed; empty body; no-store }
+        '404': { description: Invitation absent or belongs to another account }
+  /groups/{id}/invitations/{invitationId}/cancel:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }, { $ref: '#/components/parameters/GroupInvitationId' }]
+    post:
+      operationId: cancelGroupInvitation
+      security: [{ webSession: [] }]
+      summary: Captain cancels an outgoing invitation
+      description: Requires CSRF.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupRevision' }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '403': { description: Captain required }
+        '404': { description: Invitation or group unavailable to caller }
+        '409': { description: Stale roster revision }
+  /groups/{id}/captain:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }]
+    post:
+      operationId: transferGroupCaptain
+      security: [{ webSession: [] }]
+      summary: Captain explicitly transfers leadership to another member
+      description: Requires CSRF. Changes roster revision and invalidates all confirmations. Independent of SoloQ captain consent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupTargetCommand' }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '403': { description: Captain required }
+        '404': { description: Group or target unavailable }
+        '409': { description: Stale roster revision or same captain }
+  /groups/{id}/members/remove:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }]
+    post:
+      operationId: removeGroupMember
+      security: [{ webSession: [] }]
+      summary: Leave the group or captain removes another member
+      description: Requires CSRF. When the captain leaves, leadership passes atomically to the remaining member with the earliest membership order. Rejoining starts a new membership order. Last departure closes the group and invalidates its invitations/code. Other departures invalidate all roster confirmations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupTargetCommand' }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '403': { description: Cannot remove another member without captain permission }
+        '409': { description: Stale roster revision }
+  /groups/{id}/role:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }]
+    post:
+      operationId: updatePremadeDisplayRole
+      security: [{ webSession: [] }]
+      summary: Update the authenticated member's optional lobby role label
+      description: Requires CSRF and current membership. The role is visual only, never a premade admission or composition requirement. Uses a member-specific role version; does not change the roster revision or SoloQ selection. The returned snapshot is visible to members on refresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRoleVersion, role]
+              properties:
+                expectedRoleVersion: { type: integer, minimum: 0 }
+                role: { type: string, enum: [FC, HEALER, DPS] }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '400': { description: Invalid role or version }
+        '404': { description: Current account is not a member of this group }
+        '409': { description: Role changed on another device; refresh before retrying }
+  /groups/{id}/readiness:
+    parameters: [{ $ref: '#/components/parameters/PremadeGroupId' }]
+    post:
+      operationId: confirmGroupPreparation
+      deprecated: true
+      security: [{ webSession: [] }]
+      summary: Confirm or withdraw the authenticated member's saved selection
+      description: Legacy compatibility endpoint; individual confirmations are no longer used or required by the lobby or future queue admission. Requires CSRF. Confirmation binds group revision, season ID/version and selection version; changes invalidate confirmation. This is consent to the saved preparation, not eligibility. No queue admission or participant snapshot is issued; Forever/addon compatibility and matchmaking remain unavailable. Connection health, addon status and observed presence are separate fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/GroupRevision' }
+                - type: object
+                  required: [confirmed]
+                  properties:
+                    confirmed: { type: boolean }
+                    seasonId: { type: string, format: uuid, description: Required for confirmation }
+                    seasonVersion: { type: integer, minimum: 0, description: Required for confirmation }
+                    selectionVersion: { type: integer, minimum: 0, description: Required for confirmation }
+      responses:
+        '200': { $ref: '#/components/responses/PremadeGroup' }
+        '409': { description: Stale group/season/selection, missing saved selection or unresolved match }
   /auth/api-client/requests:
     post:
       operationId: startApiClientLogin
@@ -933,6 +1211,28 @@ paths:
         '401': { description: "No Battle.net session" }
         '403': { description: "Missing or inactive account" }
         '503': { description: "Configured season does not exist" }
+  /me/premade-selection:
+    put:
+      operationId: savePremadeCharacterSelection
+      summary: Save character and linked device without choosing a competitive role
+      description: Requires CSRF and an active account. Uses the existing season, character ownership, linked-device and expected-version checks. Preserves SoloQ role and captain consent atomically; leaves role null if none has been chosen. Does not create a lobby or enter a queue.
+      security: [{ webSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PremadeSelectionRequest' }
+      responses:
+        '200':
+          description: Saved character selection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonSelection' }
+        '400': { description: Invalid character declaration or request }
+        '401': { description: Session required }
+        '403': { description: Inactive account or missing CSRF }
+        '409': { description: Stale selection or season }
+        '412': { description: Linked device required }
   /me/selection:
     put:
       operationId: saveSeasonSelection
@@ -1118,7 +1418,7 @@ paths:
     get:
       operationId: getCurrentUserCharacters
       summary: Get the authenticated user's WoW Classic characters of level 60 or above in EU and North America
-      description: Requires a Battle.net session with wow.profile permission. Queries profile-classic1x-eu and profile-classic-eu on eu.api.blizzard.com with en_GB, and profile-classic1x-us and profile-classic-us on us.api.blizzard.com with en_US, using the user's token. Merges Classic branches within each regional WoW account and returns characters of level 60 or above with their source namespace. Regional account IDs may coincide; use the namespace with account, realm and character IDs for identity. A missing profile (404) in one region or branch does not hide the others; other provider failures are surfaced rather than silently returning a partial list. Never returns tokens or persists character associations.
+      description: Requires a Battle.net session with wow.profile permission. Queries profile-classic1x-eu, profile-classic-eu and profile-classicann-eu on eu.api.blizzard.com with en_GB, and profile-classic1x-us, profile-classic-us and profile-classicann-us on us.api.blizzard.com with en_US, using the user's token. Includes TBC Anniversary at level 60 or above. Merges Classic branches within each regional WoW account and returns characters of level 60 or above with their source namespace. Regional account IDs may coincide; use the namespace with account, realm and character IDs for identity. A missing profile (404) in one region or branch does not hide the others; other provider failures are surfaced rather than silently returning a partial list. Never returns tokens or persists character associations.
       responses:
         '200':
           description: WoW accounts and their owned characters
@@ -1218,6 +1518,23 @@ paths:
                 properties:
                   status: { type: string, const: unavailable }
 components:
+  parameters:
+    PremadeGroupId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    GroupInvitationId:
+      name: invitationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    PremadeGroup:
+      description: Private group snapshot; no-store. Empty body when the caller has no group or just left it. Never a queue ticket or admission.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PremadeGroup' }
   securitySchemes:
     webSession:
       type: apiKey
@@ -1229,6 +1546,86 @@ components:
       scheme: bearer
       description: Opaque account-bound rbgs.io device token, not a Battle.net token.
   schemas:
+    PlayCharacterReference:
+      type: object
+      required: [namespace, wowAccountId, realmId, characterId]
+      properties:
+        namespace: { type: string, enum: [profile-classic1x-eu, profile-classic-eu, profile-classicann-eu, profile-classic1x-us, profile-classic-us, profile-classicann-us] }
+        wowAccountId: { type: integer, format: int64, minimum: 1 }
+        realmId: { type: integer, format: int64, minimum: 1 }
+        characterId: { type: integer, format: int64, minimum: 1 }
+    PlayCharacterSelected:
+      allOf:
+        - { $ref: '#/components/schemas/PlayCharacterReference' }
+        - type: object
+          required: [region, name, realm]
+          properties:
+            region: { type: string, enum: [EU, NA] }
+            name: { type: string }
+            realm: { type: string }
+    GroupRevision:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 0 }
+    GroupTargetCommand:
+      allOf:
+        - { $ref: '#/components/schemas/GroupRevision' }
+        - type: object
+          required: [accountId]
+          properties:
+            accountId: { type: string, format: uuid }
+    GroupInvitation:
+      type: object
+      required: [id, groupId, captainName, recipientName, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        groupId: { type: string, format: uuid }
+        captainName: { type: string }
+        recipientName: { type: string }
+        expiresAt: { type: string, format: date-time }
+    PremadeGroup:
+      type: object
+      required: [id, captainId, revision, region, lobbyCode, members, invitations, queueReady, blockers]
+      properties:
+        id: { type: string, format: uuid }
+        captainId: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 0 }
+        region: { type: string, enum: [EU, NA], description: Fixed from the creator's verified selected Play character; unaffected by captain changes. }
+        lobbyCode:
+          type: [string, 'null']
+          pattern: '^[A-HJ-NP-Z2-9]{8}$'
+          description: Shared code visible only to group members; null when disabled. Do not log or publish.
+        members:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [accountId, displayName, captain, characterName, realm, role, roleVersion, selectionVersion, confirmed, companionConnected, addonStatus, gamePresence, blockers]
+            properties:
+              accountId: { type: string, format: uuid }
+              displayName: { type: string }
+              captain: { type: boolean }
+              characterName: { type: [string, 'null'] }
+              realm: { type: [string, 'null'] }
+              role: { type: [string, 'null'], enum: [FC, HEALER, DPS, null], description: Optional visual lobby label; independent of SoloQ and never used to balance premades }
+              roleVersion: { type: integer, minimum: 0 }
+              selectionVersion: { type: [integer, 'null'], minimum: 0 }
+              confirmed: { type: boolean, description: Version-bound member confirmation; not proof of eligibility }
+              companionConnected: { type: boolean, description: Selected non-revoked device heartbeat within 45 seconds; not game presence }
+              addonStatus: { type: string, enum: [UNVERIFIED] }
+              gamePresence: { type: string, enum: [UNKNOWN] }
+              blockers:
+                type: array
+                items: { type: string, enum: [ACCOUNT_UNAVAILABLE, SEASON_UNAVAILABLE, SELECTION_REQUIRED, SELECTION_INVALID, COMPANION_DISCONNECTED, CAPTURE_PERMISSION_REQUIRED, ADDON_STATUS_UNVERIFIED, MATCH_UNRESOLVED] }
+        invitations:
+          type: array
+          description: Outgoing invitations visible only to the captain
+          items: { $ref: '#/components/schemas/GroupInvitation' }
+        queueReady: { type: boolean, const: false, description: Remains false until compatibility and queue admission are implemented }
+        blockers:
+          type: array
+          items: { type: string, enum: [TEN_PLAYERS_REQUIRED, MEMBERS_NOT_ELIGIBLE, FOREVER_COMPATIBILITY_UNVERIFIED, MATCHMAKING_UNAVAILABLE] }
     BrowserPairingApproval:
       type: object
       required: [approvalSecret]
@@ -1500,6 +1897,21 @@ components:
             realm: { type: string, minLength: 1, maxLength: 100, description: "Provisional declaration uses the selected Classic character realm; not verified Forever ownership" }
         role: { type: string, enum: [FC, HEALER, DPS] }
         captainConsent: { type: boolean }
+    PremadeSelectionRequest:
+      type: object
+      required: [seasonId, seasonVersion, companionDeviceId]
+      properties:
+        seasonId: { type: string, format: uuid }
+        seasonVersion: { type: integer, format: int64, minimum: 0 }
+        companionDeviceId: { type: string, format: uuid, description: "Selected linked companion device belonging to the authenticated account; must not be revoked or expired" }
+        expectedVersion: { type: [integer, 'null'], format: int64, minimum: 0, description: "Null for first creation; saved version for replacement" }
+        characterId: { type: [string, 'null'], format: uuid }
+        declaration:
+          type: [object, 'null']
+          required: [name, realm]
+          properties:
+            name: { type: string, minLength: 1, maxLength: 100, description: "Nonblank text without control characters" }
+            realm: { type: string, minLength: 1, maxLength: 100, description: "Provisional declaration uses the selected Classic character realm; not verified Forever ownership" }
     SeasonSelection:
       type: object
       required: [characterId, name, realm, source, ratingSubjectType, ratingSubjectId, role, captainConsent, version, validForSeason]
@@ -1510,7 +1922,7 @@ components:
         source: { type: string, enum: [DECLARED, BLIZZARD_VERIFIED] }
         ratingSubjectType: { type: string, enum: [ACCOUNT, CHARACTER] }
         ratingSubjectId: { type: string, format: uuid, description: "Prospective account or character subject; no rating record is created" }
-        role: { type: string, enum: [FC, HEALER, DPS] }
+        role: { type: [string, 'null'], enum: [FC, HEALER, DPS, null], description: Competitive SoloQ role; may be unset for Premade-only character selection }
         captainConsent: { type: boolean }
         version: { type: integer, format: int64, minimum: 0 }
         validForSeason: { type: boolean, description: "Stored mode/provenance match the current season; not proof of fresh ownership, setup readiness or queue eligibility" }

@@ -16,6 +16,10 @@ public class SeasonSelectionController {
         csrfToken.getToken();
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(selections.context(authentication));
     }
+    @PutMapping("/api/v1/me/premade-selection")
+    public ResponseEntity<SelectionView> savePremade(Authentication authentication, @Valid @RequestBody PremadeSelectionRequest request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(selections.savePremade(authentication, request));
+    }
     @PutMapping("/api/v1/me/selection")
     public ResponseEntity<SelectionView> save(Authentication authentication, @Valid @RequestBody SelectionRequest request) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(selections.save(authentication, request));

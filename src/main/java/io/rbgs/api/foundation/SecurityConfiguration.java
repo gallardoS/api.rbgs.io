@@ -23,6 +23,9 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.HttpSessionOAuth2AuthorizedClientRepository;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepository;
+import org.springframework.boot.session.autoconfigure.DefaultCookieSerializerCustomizer;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -32,6 +35,18 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 
 @Configuration
 public class SecurityConfiguration {
+    @Bean
+    OAuth2AuthorizedClientRepository authorizedClientRepository() {
+        // Persist provider credentials together with each browser's authentication.
+        return new HttpSessionOAuth2AuthorizedClientRepository();
+    }
+
+    @Bean
+    DefaultCookieSerializerCustomizer sessionCookieSerializerCustomizer() {
+        // Keep the raw JSESSIONID contract used by the local API-client handoff.
+        return serializer -> serializer.setUseBase64Encoding(false);
+    }
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
             ObjectProvider<ClientRegistrationRepository> registrations,
@@ -44,6 +59,8 @@ public class SecurityConfiguration {
                 authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/api-client/approve").access(new AccountAuthorizationManager(accountServices, null, false));
             }
+            authorize.requestMatchers(request -> request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
+                    && request.getRequestURI().equals("/api/v1/me/group-events")).permitAll();
             authorize.requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
@@ -51,7 +68,7 @@ public class SecurityConfiguration {
                 .requestMatchers(HttpMethod.GET, "/api/v1/me/matches", "/api/v1/me/matches/*").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.POST, "/api/v1/me/matches/*/disputes", "/api/v1/me/matches/*/disputes/replies", "/api/v1/me/matches/*/read").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
-                .requestMatchers("/api/v1/characters/me", "/api/v1/play/context", "/api/v1/me/selection", "/api/v1/device-pairings/approve", "/api/v1/device-pairings/browser/**", "/api/v1/device-launches", "/api/v1/device-launches/*", "/api/v1/devices/**").access(new AccountAuthorizationManager(accountServices, null, false))
+                .requestMatchers("/api/v1/groups/**", "/api/v1/me/group", "/api/v1/me/group-events", "/api/v1/me/group-invitations/**", "/api/v1/characters/me", "/api/v1/play/context", "/api/v1/me/selection", "/api/v1/me/premade-selection", "/api/v1/me/play-character", "/api/v1/device-pairings/approve", "/api/v1/device-pairings/browser/**", "/api/v1/device-launches", "/api/v1/device-launches/*", "/api/v1/devices/**").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/moderation/**").access(new AccountAuthorizationManager(accountServices, "MODERATOR", false))
                 .anyRequest().denyAll();
         });

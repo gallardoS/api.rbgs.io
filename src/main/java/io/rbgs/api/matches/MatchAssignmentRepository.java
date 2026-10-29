@@ -9,6 +9,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface MatchAssignmentRepository extends JpaRepository<MatchAssignmentEntity, UUID> {
+    @Query("select count(a) > 0 from MatchAssignmentEntity a join a.match m where a.accountId=:account "
+            + "and m.cancelledAt is null and m.verificationStatus in ('PENDING', 'REVIEW') "
+            + "and (m.mode <> io.rbgs.api.matches.MatchMode.CONTROLLED_TEST "
+            + "or m.evidencePolicy <> io.rbgs.api.matches.MatchEvidencePolicy.CAPTURE_ONLY "
+            + "or m.verificationDeadline is null or m.verificationDeadline > :now)")
+    boolean hasBlockingParticipation(@Param("account") UUID account, @Param("now") java.time.Instant now);
     @Query("select a from MatchAssignmentEntity a join fetch a.match where a.match.id=:match and a.accountId=:account")
     Optional<MatchAssignmentEntity> findParticipant(@Param("match") UUID match, @Param("account") UUID account);
 

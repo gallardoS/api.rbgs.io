@@ -12,7 +12,7 @@ Java 21, Spring Boot 4.1, Spring MVC/Security, Spring Data JPA, PostgreSQL 17, F
 - `seasons`: season and rating-subject persistence.
 - `foundation`: security, CSRF and health checks.
 
-Matchmaking, ranked matches, ratings and groups currently have reserved packages. Evidence supports moderator-declared Darkspear tests, immutable reports and durable receipts. Flyway owns schema changes; Hibernate validates the schema and Open Session in View is disabled.
+Groups support private premade lobbies, targeted invitations, shared lobby codes and version-bound preparation. Matchmaking, ranked matches and ratings remain unavailable. Evidence supports moderator-declared Darkspear tests, immutable reports and durable receipts. Flyway owns schema changes; Hibernate validates the schema and Open Session in View is disabled.
 
 ## Local development
 
@@ -54,11 +54,13 @@ The contract is in [OpenAPI](src/main/resources/static/openapi/v1.yaml), served 
 | `GET /api/v1/auth/me` | Current account; login uses `/oauth2/authorization/battle-net`. |
 | `GET /api/v1/characters/me` | Authenticated player's characters. |
 | `GET /api/v1/play/context`, `PUT /api/v1/me/selection` | Season context and character/match preferences. |
+| `GET /api/v1/me/group`, `GET /api/v1/me/group-invitations` | Own private lobby and incoming invitations. |
+| `POST /api/v1/groups`, `POST /api/v1/groups/join`, `/api/v1/groups/{id}/*` | Create/join a lobby, manage invitations/captain/code and confirm preparation; no queue admission. |
 | `/api/v1/season-notifications` | Public availability, signup, confirmation and unsubscribe. |
 | `/api/v1/moderation/season-notifications` | Moderator configuration and explicit launch action. |
 | `POST /api/v1/email-notifications/feedback`, `POST /api/v1/email-notifications/feedback/resend` | Signed SNS and Resend feedback. |
 
-Web authentication uses an HTTP session. Mutations require the `X-XSRF-TOKEN` header matching the `XSRF-TOKEN` cookie; signed webhook POSTs are exempt. Moderation requires an active `MODERATOR`. Native `/companion/*` and `/evidence*` routes ignore web cookies. Device operations require scoped bearer credentials; `/companion/connect` instead redeems a short-lived web-authorized launch ticket and native random proof. Capture permissions require explicit web consent, either through Open & connect or the existing native-initiated approval flow. Open & connect reuses and upgrades an existing same-account device; it refuses a silent switch to another account.
+Web authentication uses a PostgreSQL-backed HTTP session that survives backend restarts. Sessions expire after 30 days of inactivity by default (`RBGS_SESSION_TIMEOUT`); the HttpOnly browser cookie also lasts 30 days. Logout invalidates the stored session. Battle.net authorization can expire or be revoked independently, requiring another login for character access. Mutations require the `X-XSRF-TOKEN` header matching the `XSRF-TOKEN` cookie; signed webhook POSTs are exempt. Moderation requires an active `MODERATOR`. Native `/companion/*` and `/evidence*` routes ignore web cookies. Device operations require scoped bearer credentials; `/companion/connect` instead redeems a short-lived web-authorized launch ticket and native random proof. Capture permissions require explicit web consent, either through Open & connect or the existing native-initiated approval flow. Open & connect reuses and upgrades an existing same-account device; it refuses a silent switch to another account.
 
 The companion opens browser Settings with a short-lived approval handle, separate from its native polling secret. Approval shows the PC/account/permissions and completes without code entry; the native process alone receives the device token. `POST /companion/heartbeat` records server-time presence every ~15 seconds. `/devices/me` exposes own lastSeenAt and connected (45-second TTL), independently of match evidence. Web Play/Settings shows selected-device connectivity and an open-app link; missing signals and failed queries are distinct.
 

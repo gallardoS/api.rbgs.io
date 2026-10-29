@@ -20,6 +20,11 @@ spring:
     enabled: true
     schemas: rbgs
     default-schema: rbgs
+  session:
+    timeout: ${RBGS_SESSION_TIMEOUT:30d}
+    jdbc:
+      initialize-schema: never
+      table-name: rbgs.spring_session
   mvc:
     problemdetails:
       enabled: true
@@ -63,6 +68,8 @@ server:
   servlet:
     session:
       cookie:
+        name: JSESSIONID
+        max-age: ${RBGS_SESSION_TIMEOUT:30d}
         http-only: true
         same-site: lax
         secure: ${RBGS_SECURE_COOKIES:true}

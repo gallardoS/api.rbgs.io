@@ -27,7 +27,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class WowCharacterLoader {
     private static final List<String> NAMESPACES = List.of(
-            "profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us", "profile-classic-us");
+            "profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us", "profile-classic-us",
+            "profile-classicann-eu", "profile-classicann-us");
     private record RegionalAccount(String region, long id) { }
     private final RestClient client;
     private final ThreadPoolExecutor requests = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,

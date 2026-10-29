@@ -38,6 +38,18 @@ public class SelectionService {
     }
 
     @Transactional
+    public SelectionView savePremade(Authentication authentication, PremadeSelectionRequest request) {
+        UUID accountId = accountId(authentication);
+        // Read the competitive preferences under the same account lock used by SoloQ writes.
+        accountRepository.findForSelection(accountId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
+        var existing = selections.findByAccountIdAndSeasonId(accountId, request.seasonId()).orElse(null);
+        return save(authentication, new SelectionRequest(request.seasonId(), request.seasonVersion(), request.expectedVersion(),
+                request.characterId(), request.declaration(), existing == null ? null : existing.getMatchRole(),
+                existing != null && existing.isCaptainConsent(), request.companionDeviceId()));
+    }
+
+    @Transactional
     public SelectionView save(Authentication authentication, SelectionRequest request) {
         UUID accountId = accountId(authentication);
         if (settings.seasonId() == null) throw conflict("No selection season is configured");
@@ -79,6 +91,7 @@ public class SelectionService {
         }
         if (selection == null) selection = new SeasonSelection(accountId, season.getId());
         selection.choose(character.getId(), season.getRatingSubjectType(), request.role(), request.captainConsent());
+        selection.useDevice(request.companionDeviceId());
         return view(selections.saveAndFlush(selection), season);
     }
 

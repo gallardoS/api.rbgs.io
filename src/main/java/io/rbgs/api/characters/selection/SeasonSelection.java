@@ -17,8 +17,9 @@ public class SeasonSelection {
     @Enumerated(EnumType.STRING)
     @Column(name = "rating_subject_type", nullable = false, length = 16) private RatingSubjectType ratingSubjectType;
     @Enumerated(EnumType.STRING)
-    @Column(name = "match_role", nullable = false, length = 16) private MatchRole matchRole;
+    @Column(name = "match_role", length = 16) private MatchRole matchRole;
     @Column(name = "captain_consent", nullable = false) private boolean captainConsent;
+    @Column(name = "companion_device_id") private UUID companionDeviceId;
     @Version @Column(nullable = false) private Long version;
 
     public SeasonSelection(UUID accountId, UUID seasonId) {
@@ -32,4 +33,5 @@ public class SeasonSelection {
         this.matchRole = role;
         this.captainConsent = captainConsent;
     }
+    public void useDevice(UUID deviceId) { this.companionDeviceId = deviceId; }
 }

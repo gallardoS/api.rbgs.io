@@ -75,6 +75,34 @@ class SelectionIntegrationTests {
         return new OAuth2AuthenticationToken(new DefaultOidcUser(List.of(() -> "ROLE_USER"), token), List.of(() -> "ROLE_USER"), "battle-net");
     }
 
+    @Test void premadeCharacterDoesNotRequireOrInventSoloRole() throws Exception {
+        String body = request("null", "Premade").replace("\"role\":\"HEALER\",", "").replace("\"captainConsent\":false,", "");
+        mvc.perform(put("/api/v1/me/premade-selection").with(login()).with(csrf()).contentType("application/json").content(body))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.role").isEmpty()).andExpect(jsonPath("$.name").value("Premade"));
+        assertNull(service.context(authentication()).selection().role());
+        mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
+            .content(body.replace("\"expectedVersion\":null", "\"expectedVersion\":0")))
+            .andExpect(status().isBadRequest());
+    }
+    @Test void premadeCharacterSavePreservesCompetitiveRoleConsentAndVersions() throws Exception {
+        var first = service.save(authentication(), new SelectionRequest(season.getId(), season.getVersion(), null, null,
+            new SelectionRequest.Declaration("Solo", "Normal"), MatchRole.FC, true, deviceId));
+        String body = request(String.valueOf(first.version()), "Premade").replace("\"role\":\"HEALER\",", "").replace("\"captainConsent\":false,", "");
+        mvc.perform(put("/api/v1/me/premade-selection").with(login()).with(csrf()).contentType("application/json").content(body))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.role").value("FC")).andExpect(jsonPath("$.captainConsent").value(true));
+        mvc.perform(put("/api/v1/me/premade-selection").with(login()).with(csrf()).contentType("application/json").content(body))
+            .andExpect(status().isConflict());
+    }
+    @Test void premadeCharacterSaveStillRequiresAuthenticationCsrfSeasonAndDevice() throws Exception {
+        String body = request("null", "Premade").replace("\"role\":\"HEALER\",", "").replace("\"captainConsent\":false,", "");
+        mvc.perform(put("/api/v1/me/premade-selection").with(csrf()).contentType("application/json").content(body)).andExpect(status().isUnauthorized());
+        mvc.perform(put("/api/v1/me/premade-selection").with(login()).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/me/premade-selection").with(login()).with(csrf()).contentType("application/json")
+            .content(body.replace(deviceId.toString(), UUID.randomUUID().toString()))).andExpect(status().isPreconditionFailed());
+        when(settings.seasonId()).thenReturn(null);
+        mvc.perform(put("/api/v1/me/premade-selection").with(login()).with(csrf()).contentType("application/json").content(body)).andExpect(status().isConflict());
+    }
+
     @Test void noConfiguredSeasonDoesNotCreateOrOpenOne() throws Exception {
         when(settings.seasonId()).thenReturn(null);
         mvc.perform(get("/api/v1/play/context").with(login()))
