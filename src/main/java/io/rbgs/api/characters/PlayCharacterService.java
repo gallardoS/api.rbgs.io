@@ -1,5 +1,7 @@
 package io.rbgs.api.characters;
 
+import io.rbgs.api.characters.dto.WowAccountProfile.WowCharacter;
+import tools.jackson.databind.ObjectMapper;
 import io.rbgs.api.groups.GroupMemberRepository;
 import io.rbgs.api.groups.PremadeGroupRepository;
 import io.rbgs.api.identity.AccountRepository;
@@ -21,6 +23,7 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class PlayCharacterService {
     private final WowCharacterService characters;
+    private final ObjectMapper json;
     private final AccountService accounts;
     private final AccountRepository accountRepository;
     private final GroupMemberRepository members;
@@ -31,14 +34,15 @@ public class PlayCharacterService {
     public record Reference(@NotBlank @Pattern(regexp = "profile-classic(1x|ann)?-(eu|us)") String namespace,
             @Positive long wowAccountId, @Positive long realmId, @Positive long characterId) { }
     public record Selected(String namespace, long wowAccountId, long realmId, long characterId,
-            String region, String name, String realm) { }
+            String region, String name, String realm, WowCharacter character) { }
 
     public Selected current(Authentication auth) { return find(actor(auth)); }
 
     public Selected find(UUID account) {
         return db.query("SELECT * FROM rbgs.play_characters WHERE account_id=?", (row, index) -> new Selected(
                 row.getString("namespace"), row.getLong("wow_account_id"), row.getLong("realm_id"),
-                row.getLong("character_id"), row.getString("region"), row.getString("name"), row.getString("realm")),
+                row.getLong("character_id"), row.getString("region"), row.getString("name"), row.getString("realm"),
+                row.getString("character_profile") == null ? null : json.readValue(row.getString("character_profile"), WowCharacter.class)),
                 account).stream().findFirst().orElse(null);
     }
 
@@ -55,7 +59,7 @@ public class PlayCharacterService {
         String region = character.namespace().endsWith("-us") ? "NA" : "EU";
         var selected = new Selected(character.namespace(), reference.wowAccountId(), character.realm().id(), character.id(),
                 region, character.name(), character.realm().name() == null || character.realm().name().isBlank()
-                    ? character.realm().slug() : character.realm().name());
+                    ? character.realm().slug() : character.realm().name(), character);
         return new TransactionTemplate(transactions).execute(status -> {
             var account = accountRepository.findForSelection(actor).orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
             if (!"ACTIVE".equals(account.getStatus())) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
@@ -63,12 +67,12 @@ public class PlayCharacterService {
             if (membership != null && !region.equals(groups.findById(membership.getGroupId()).orElseThrow().getRegion()))
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Choose a character from your lobby's region");
             if (!selected.equals(find(actor))) db.update("""
-                    INSERT INTO rbgs.play_characters(account_id,namespace,wow_account_id,realm_id,character_id,region,name,realm)
-                    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (account_id) DO UPDATE SET
+                    INSERT INTO rbgs.play_characters(account_id,namespace,wow_account_id,realm_id,character_id,region,name,realm,character_profile)
+                    VALUES (?,?,?,?,?,?,?,?,?::jsonb) ON CONFLICT (account_id) DO UPDATE SET
                     namespace=EXCLUDED.namespace, wow_account_id=EXCLUDED.wow_account_id, realm_id=EXCLUDED.realm_id,
-                    character_id=EXCLUDED.character_id, region=EXCLUDED.region, name=EXCLUDED.name, realm=EXCLUDED.realm
+                    character_id=EXCLUDED.character_id, region=EXCLUDED.region, name=EXCLUDED.name, realm=EXCLUDED.realm, character_profile=EXCLUDED.character_profile
                     """, actor, selected.namespace(), selected.wowAccountId(), selected.realmId(), selected.characterId(),
-                    region, selected.name(), selected.realm());
+                    region, selected.name(), selected.realm(), json.writeValueAsString(character));
             return selected;
         });
     }

@@ -133,7 +133,7 @@ class GroupIntegrationTests {
         });
         Thread.sleep(150);
         assertEquals(beforeCaptain, changes(captain)); assertEquals(beforeMember, changes(member));
-        service.displayRole(auth(1), group.id(), 0, MatchRole.DPS);
+        service.displayRole(auth(1), group.id(), 0, MatchRole.FC);
         await(() -> changes(captain) > beforeCaptain && changes(member) > beforeMember);
         assertEquals(beforeOutsider, changes(outsider));
         assertFalse(captain.getResponse().getContentAsString().contains(group.lobbyCode()));
@@ -269,6 +269,98 @@ class GroupIntegrationTests {
         assertEquals("Owned EU",service.own(auth(1)).members().stream().filter(m->m.accountId().equals(players.get(0).id())).findFirst().orElseThrow().characterName());
         assertEquals(group.region(),service.own(auth(1)).region());
     }
+    private io.rbgs.api.characters.dto.WowAccountProfile profileCatalog(String name, int level, String avatar) {
+        var character = new io.rbgs.api.characters.dto.WowAccountProfile.WowCharacter(70, name,
+            new io.rbgs.api.characters.dto.WowAccountProfile.Realm(1,"EU realm","eu-realm"),
+            new io.rbgs.api.characters.dto.WowAccountProfile.NamedReference(11L,"Druid",null),
+            new io.rbgs.api.characters.dto.WowAccountProfile.NamedReference(4L,"Night Elf",null),
+            new io.rbgs.api.characters.dto.WowAccountProfile.NamedReference(0L,"Alliance",null),
+            level, avatar, null, "profile-classicann-eu",
+            new io.rbgs.api.characters.dto.WowAccountProfile.NamedReference(99L,"Fixture Guild",null),
+            new io.rbgs.api.characters.dto.WowAccountProfile.NamedReference(null,"Female","FEMALE"));
+        return new io.rbgs.api.characters.dto.WowAccountProfile(List.of(
+            new io.rbgs.api.characters.dto.WowAccountProfile.WowAccount(7,List.of(character))));
+    }
+    private io.rbgs.api.characters.PlayCharacterService.Reference profileReference() {
+        return new io.rbgs.api.characters.PlayCharacterService.Reference("profile-classicann-eu",7,1,70);
+    }
+    @Test void selectedProfileIsSharedOnlyWithLobbyMembersWithoutProviderFanout() throws Exception {
+        when(provider.currentCharacters(any())).thenReturn(profileCatalog("Owned Druid",70,
+            "https://render.worldofwarcraft.com/classicann-eu/character/eu-realm/1/70-avatar.jpg"));
+        playCharacters.save(auth(0),null,profileReference());
+        var group=join(service.create(auth(0)),0,1);
+        clearInvocations(provider);
+        mvc.perform(get("/api/v1/me/group").with(login(1))).andExpect(status().isOk())
+            .andExpect(jsonPath("$.members[?(@.captain == true)].character.name").value(org.hamcrest.Matchers.contains("Owned Druid")))
+            .andExpect(jsonPath("$.members[?(@.captain == true)].character.level").value(org.hamcrest.Matchers.contains(70)))
+            .andExpect(jsonPath("$.members[?(@.captain == true)].character.playable_class.name").value(org.hamcrest.Matchers.contains("Druid")))
+            .andExpect(jsonPath("$.members[?(@.captain == true)].character.guild.name").value(org.hamcrest.Matchers.contains("Fixture Guild")))
+            .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("wowAccountId"))))
+            .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("wow_accounts"))));
+        mvc.perform(get("/api/v1/me/group").with(login(2))).andExpect(status().isOk()).andExpect(content().string(""));
+        mvc.perform(get("/api/v1/me/group")).andExpect(status().isUnauthorized());
+        assertNull(group.members().stream().filter(m->!m.captain()).findFirst().orElseThrow().character());
+        assertEquals("https://render.worldofwarcraft.com/classicann-eu/character/eu-realm/1/70-avatar.jpg",
+            service.own(auth(1)).members().stream().filter(GroupService.Member::captain).findFirst().orElseThrow().character().avatarUrl());
+        verifyNoInteractions(provider);
+    }
+    @Test void profileRefreshKeepsSelectionAndRoleAndOnlyNotifiesForChangedData() throws Exception {
+        when(provider.currentCharacters(any())).thenReturn(profileCatalog("Owned Druid",70,null));
+        playCharacters.save(auth(0),null,profileReference());
+        var group=join(service.create(auth(0)),0,1);
+        group=service.displayRole(auth(0),group.id(),0,MatchRole.HEALER);
+        var peer=stream(1);
+        // Byte-identical JSONB after verification must not write or generate notifications.
+        var before=db.queryForObject("SELECT xmin::text FROM rbgs.play_characters WHERE account_id=?",String.class,players.get(0).id());
+        playCharacters.save(auth(0),null,profileReference());
+        assertEquals(before,db.queryForObject("SELECT xmin::text FROM rbgs.play_characters WHERE account_id=?",String.class,players.get(0).id()));
+        int count=changes(peer);
+        when(provider.currentCharacters(any())).thenReturn(profileCatalog("Owned Druid",71,null));
+        playCharacters.save(auth(0),null,profileReference());
+        await(()->changes(peer)>count);
+        var updated=service.own(auth(1));
+        var captain=updated.members().stream().filter(GroupService.Member::captain).findFirst().orElseThrow();
+        assertEquals(71,captain.character().level()); assertNull(captain.character().avatarUrl());
+        assertEquals(MatchRole.HEALER,captain.role()); assertEquals(group.revision(),updated.revision());
+        assertEquals(group.lobbyCode(),updated.lobbyCode());
+        when(provider.currentCharacters(any())).thenThrow(new ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE));
+        assertThrows(ResponseStatusException.class,()->playCharacters.save(auth(0),null,profileReference()));
+        assertEquals(71,playCharacters.find(players.get(0).id()).character().level());
+    }
+    @Test void twoAccountHttpLifecycleSynchronizesInvitesRolesProfilesAndCaptainSuccession() throws Exception {
+        when(provider.currentCharacters(any())).thenReturn(profileCatalog("Captain Druid",70,null));
+        playCharacters.save(auth(0),null,profileReference());
+        var first=stream(0); var second=stream(1);
+        mvc.perform(post("/api/v1/groups").with(login(0)).with(csrf())).andExpect(status().isOk());
+        var group=service.own(auth(0)); int peerEvents=changes(second);
+        mvc.perform(post("/api/v1/groups/"+group.id()+"/invitations").with(login(0)).with(csrf()).contentType("application/json")
+            .content("{\"expectedRevision\":"+group.revision()+",\"battleTag\":\""+players.get(1).displayName()+"\"}"))
+            .andExpect(status().isOk());
+        await(()->changes(second)>peerEvents);
+        var invitation=service.incoming(auth(1)).getFirst();
+        mvc.perform(post("/api/v1/me/group-invitations/"+invitation.id()+"/accept").with(login(2)).with(csrf()))
+            .andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/me/group-invitations/"+invitation.id()+"/accept").with(login(1)).with(csrf()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.members.length()").value(2));
+        int leaderEvents=changes(first);
+        mvc.perform(post("/api/v1/groups/"+group.id()+"/role").with(login(1)).with(csrf()).contentType("application/json")
+            .content("{\"expectedRoleVersion\":0,\"role\":\"HEALER\"}"))
+            .andExpect(status().isOk());
+        await(()->changes(first)>leaderEvents);
+        var current=service.own(auth(0));
+        mvc.perform(post("/api/v1/groups/"+group.id()+"/members/remove").with(login(0)).with(csrf()).contentType("application/json")
+            .content("{\"expectedRevision\":"+current.revision()+",\"accountId\":\""+players.get(0).id()+"\"}"))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/me/group").with(login(1))).andExpect(status().isOk())
+            .andExpect(jsonPath("$.captainId").value(players.get(1).id().toString()))
+            .andExpect(jsonPath("$.lobbyCode").value(group.lobbyCode()));
+        mvc.perform(post("/api/v1/groups/join").with(login(0)).with(csrf()).contentType("application/json")
+            .content("{\"code\":\""+group.lobbyCode()+"\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.members.length()").value(2));
+        current=service.own(auth(1));
+        assertFalse(current.queueReady());
+        assertTrue(current.members().stream().allMatch(m->"UNVERIFIED".equals(m.addonStatus())&&"UNKNOWN".equals(m.gamePresence())));
+    }
     @Test void concurrentRegionSelectionAndCodeJoinCannotCreateMixedMembership() throws Exception {
         var group=service.create(auth(0));
         when(provider.currentCharacters(any())).thenReturn(ownedRegions());
@@ -386,6 +478,47 @@ class GroupIntegrationTests {
         }
         assertEquals(2, service.own(auth(1)).members().size());
     }
+    @Test void concurrentInvitationsExpireIndependentlyAndAcceptingOneClearsTheOthers() throws Exception {
+        var first=service.create(auth(0)); var second=service.create(auth(1));
+        var before=Instant.now(); var start=new CountDownLatch(1);
+        try(var executor=Executors.newFixedThreadPool(2)) {
+            var a=executor.submit(()->{start.await();return invite(first,0,2);});
+            var b=executor.submit(()->{start.await();return invite(second,1,2);});
+            start.countDown(); a.get(10,TimeUnit.SECONDS); b.get(10,TimeUnit.SECONDS);
+        }
+        var after=Instant.now(); var pending=service.incoming(auth(2));
+        assertEquals(2,pending.size());
+        assertNotEquals(pending.get(0).id(),pending.get(1).id());
+        assertEquals(Set.of(first.id(),second.id()),pending.stream().map(GroupService.Invitation::groupId).collect(java.util.stream.Collectors.toSet()));
+        for(var invitation:pending) {
+            assertFalse(invitation.expiresAt().isBefore(before.plusSeconds(60)));
+            assertFalse(invitation.expiresAt().isAfter(after.plusSeconds(60)));
+        }
+        db.update("UPDATE rbgs.group_invitations SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",pending.getFirst().id());
+        assertEquals(pending.getLast().id(),service.incoming(auth(2)).getFirst().id());
+        assertEquals(1,service.incoming(auth(2)).size());
+        conflict(()->service.accept(auth(2),pending.getFirst().id()));
+        if(pending.getFirst().groupId().equals(first.id())) invite(first,0,2); else invite(second,1,2);
+        assertEquals(2,service.incoming(auth(2)).size());
+        var accepted=service.accept(auth(2),pending.getFirst().id());
+        assertEquals(pending.getFirst().groupId(),accepted.id());
+        assertTrue(service.incoming(auth(2)).isEmpty());
+        assertEquals(404,assertThrows(ResponseStatusException.class,()->service.accept(auth(2),pending.getLast().id())).getStatusCode().value());
+        assertEquals(accepted.id(),service.own(auth(2)).id());
+        assertEquals(1,db.queryForObject("SELECT count(*) FROM rbgs.group_members WHERE account_id=?",Integer.class,players.get(2).id()));
+    }
+    @Test void renewalKeepsTheInvitationIdAndRestartsItsOneMinuteDeadline() {
+        var group=service.create(auth(0)); invite(group,0,1);
+        var old=service.incoming(auth(1)).getFirst();
+        db.update("UPDATE rbgs.group_invitations SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",old.id());
+        conflict(()->service.accept(auth(1),old.id()));
+        var before=Instant.now(); invite(group,0,1); var after=Instant.now();
+        var renewed=service.incoming(auth(1)).getFirst();
+        assertEquals(old.id(),renewed.id());
+        assertFalse(renewed.expiresAt().isBefore(before.plusSeconds(60)));
+        assertFalse(renewed.expiresAt().isAfter(after.plusSeconds(60)));
+        assertEquals(group.id(),service.accept(auth(1),renewed.id()).id());
+    }
     @Test void expiredDeclinedAndCancelledInvitationsCannotJoin() {
         var group = service.create(auth(0));
         invite(group, 0, 1);
@@ -401,20 +534,40 @@ class GroupIntegrationTests {
         service.cancelInvitation(auth(0), group.id(), group.revision(), next);
         assertThrows(ResponseStatusException.class, () -> service.accept(auth(1), next));
     }
-    @Test void optionalLobbyRoleIsSharedWithoutChangingSoloSelectionOrRoster() {
+    @Test void defaultDpsLobbyRoleIsSharedWithoutChangingSoloSelectionOrRoster() {
         var selected = select(1);
         var group = join(service.create(auth(0)), 0, 1);
         long revision = group.revision();
-        assertNull(group.members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow().role());
-        var updated = service.displayRole(auth(1), group.id(), 0, MatchRole.DPS);
+        assertEquals(MatchRole.DPS, group.members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow().role());
+        var updated = service.displayRole(auth(1), group.id(), 0, MatchRole.FC);
         var shared = service.own(auth(0)).members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow();
-        assertEquals(MatchRole.DPS, shared.role());
+        assertEquals(MatchRole.FC, shared.role());
         assertEquals(1, shared.roleVersion());
         assertEquals(revision, updated.revision());
         assertEquals(selected.version(), shared.selectionVersion());
         assertEquals(MatchRole.HEALER, selections.context(auth(1)).selection().role());
-        conflict(() -> service.displayRole(auth(1), group.id(), 0, MatchRole.FC));
-        assertEquals(MatchRole.DPS, service.own(auth(1)).members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow().role());
+        conflict(() -> service.displayRole(auth(1), group.id(), 0, MatchRole.DPS));
+        assertEquals(MatchRole.FC, service.own(auth(1)).members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow().role());
+    }
+    @Test void creationInviteAndCodeJoinAlwaysHaveRolesAndClearingIsRejected() throws Exception {
+        var group=join(service.create(auth(0)),0,1);
+        group=service.join(auth(2),group.lobbyCode());
+        assertTrue(group.members().stream().allMatch(m->m.role()==MatchRole.DPS));
+        String path="/api/v1/groups/"+group.id()+"/role";
+        mvc.perform(post(path).with(login(1)).with(csrf()).contentType("application/json")
+            .content("{\"expectedRoleVersion\":0,\"role\":\"HEALER\"}"))
+            .andExpect(status().isOk());
+        mvc.perform(post(path).with(login(1)).with(csrf()).contentType("application/json")
+            .content("{\"expectedRoleVersion\":1,\"role\":\"HEALER\"}"))
+            .andExpect(status().isOk());
+        for(String body:List.of("{\"expectedRoleVersion\":1,\"role\":null}","{\"expectedRoleVersion\":1}"))
+            mvc.perform(post(path).with(login(1)).with(csrf()).contentType("application/json").content(body))
+                .andExpect(status().isBadRequest());
+        var member=service.own(auth(1)).members().stream().filter(m->m.accountId().equals(players.get(1).id())).findFirst().orElseThrow();
+        assertEquals(MatchRole.HEALER,member.role()); assertEquals(1,member.roleVersion());
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->
+            db.update("UPDATE rbgs.group_members SET display_role=NULL WHERE account_id=?",players.get(1).id()));
+        assertEquals("HEALER",db.queryForObject("SELECT display_role FROM rbgs.group_members WHERE account_id=?",String.class,players.get(1).id()));
     }
     @Test void displayRoleRequiresMembershipAuthenticationCsrfAndValidRole() throws Exception {
         var group = join(service.create(auth(0)), 0, 1);
@@ -434,7 +587,7 @@ class GroupIntegrationTests {
         assertNull(selections.context(auth(1)).selection());
         service.remove(auth(1), group.id(), group.revision(), players.get(1).id());
         var rejoined = service.join(auth(1), group.lobbyCode()).members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow();
-        assertNull(rejoined.role());
+        assertEquals(MatchRole.DPS, rejoined.role());
         assertEquals(0, rejoined.roleVersion());
     }
     @Test void tenDistinctAccountsIsTheMaximumAndNineCannotBeQueueReady() {
@@ -542,7 +695,7 @@ class GroupIntegrationTests {
         assertEquals(players.get(2).id(), moved.captainId());
         assertEquals(target.revision() + 1, moved.revision());
         var member = moved.members().stream().filter(m -> m.accountId().equals(players.get(1).id())).findFirst().orElseThrow();
-        assertNull(member.role()); assertEquals(0, member.roleVersion()); assertFalse(member.confirmed());
+        assertEquals(MatchRole.DPS, member.role()); assertEquals(0, member.roleVersion()); assertFalse(member.confirmed());
         var old = service.own(auth(0));
         assertEquals(1, old.members().size()); assertEquals(source.revision() + 1, old.revision());
         assertEquals(source.lobbyCode(), old.lobbyCode());

@@ -75,14 +75,27 @@ class SelectionIntegrationTests {
         return new OAuth2AuthenticationToken(new DefaultOidcUser(List.of(() -> "ROLE_USER"), token), List.of(() -> "ROLE_USER"), "battle-net");
     }
 
-    @Test void premadeCharacterDoesNotRequireOrInventSoloRole() throws Exception {
+    @Test void premadeCharacterDefaultsSoloRoleToDpsWithoutRequiringAChoice() throws Exception {
         String body = request("null", "Premade").replace("\"role\":\"HEALER\",", "").replace("\"captainConsent\":false,", "");
         mvc.perform(put("/api/v1/me/premade-selection").with(login()).with(csrf()).contentType("application/json").content(body))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.role").isEmpty()).andExpect(jsonPath("$.name").value("Premade"));
-        assertNull(service.context(authentication()).selection().role());
+            .andExpect(status().isOk()).andExpect(jsonPath("$.role").value("DPS")).andExpect(jsonPath("$.name").value("Premade"));
+        assertEquals(MatchRole.DPS,service.context(authentication()).selection().role());
         mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json")
             .content(body.replace("\"expectedVersion\":null", "\"expectedVersion\":0")))
             .andExpect(status().isBadRequest());
+    }
+    @Test void soloRoleCannotBeClearedAndPremadeCharacterUpdatesPreserveIt() throws Exception {
+        var initial=service.save(authentication(),new SelectionRequest(season.getId(),season.getVersion(),null,null,
+            new SelectionRequest.Declaration("Dps","Normal"),MatchRole.DPS,false,deviceId));
+        for(String body:List.of(request(String.valueOf(initial.version()),"Dps").replace("\"role\":\"HEALER\"","\"role\":null"),
+                request(String.valueOf(initial.version()),"Dps").replace("\"role\":\"HEALER\",","")))
+            mvc.perform(put("/api/v1/me/selection").with(login()).with(csrf()).contentType("application/json").content(body))
+                .andExpect(status().isBadRequest());
+        assertEquals(MatchRole.DPS,service.context(authentication()).selection().role());
+        assertEquals(initial.version(),service.context(authentication()).selection().version());
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->
+            db.update("UPDATE rbgs.season_selections SET match_role=NULL WHERE account_id=?",account.id()));
+        assertEquals(MatchRole.DPS,service.context(authentication()).selection().role());
     }
     @Test void premadeCharacterSavePreservesCompetitiveRoleConsentAndVersions() throws Exception {
         var first = service.save(authentication(), new SelectionRequest(season.getId(), season.getVersion(), null, null,

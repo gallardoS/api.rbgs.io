@@ -45,7 +45,7 @@ public class SelectionService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
         var existing = selections.findByAccountIdAndSeasonId(accountId, request.seasonId()).orElse(null);
         return save(authentication, new SelectionRequest(request.seasonId(), request.seasonVersion(), request.expectedVersion(),
-                request.characterId(), request.declaration(), existing == null ? null : existing.getMatchRole(),
+                request.characterId(), request.declaration(), existing == null ? MatchRole.DPS : existing.getMatchRole(),
                 existing != null && existing.isCaptainConsent(), request.companionDeviceId()));
     }
 

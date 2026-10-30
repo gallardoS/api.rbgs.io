@@ -41,7 +41,8 @@ public class GroupService {
 
     public record Member(UUID accountId, String displayName, boolean captain, String characterName, String realm,
             MatchRole role, long roleVersion, Long selectionVersion, boolean confirmed, boolean companionConnected,
-            String addonStatus, String gamePresence, List<String> blockers) { }
+            String addonStatus, String gamePresence, List<String> blockers,
+            io.rbgs.api.characters.dto.WowAccountProfile.WowCharacter character) { }
     public record Invitation(UUID id, UUID groupId, String captainName, String recipientName, Instant expiresAt) { }
     public record Group(UUID id, UUID captainId, long revision, String region, String lobbyCode, List<Member> members, List<Invitation> invitations,
             boolean queueReady, List<String> blockers) { }
@@ -243,7 +244,7 @@ public class GroupService {
         if (member.getDisplayRoleVersion() != expectedRoleVersion) throw conflict("Lobby role changed; reload the group");
         member.displayRole(role);
         members.flush();
-        // This optional label never changes the competitive selection or roster revision.
+        // This visual label never changes the competitive selection or roster revision.
         return view(group, actor);
     }
 
@@ -317,7 +318,7 @@ public class GroupService {
                 && Objects.equals(member.getReadySelectionVersion(), selection.getVersion());
         return new Member(id, account.getDisplayName(), group.getCaptainId().equals(id), selected != null ? selected.name() : character == null ? null : character.getName(),
                 selected != null ? selected.realm() : character == null ? null : character.getRealm(), member.getDisplayRole(), member.getDisplayRoleVersion(),
-                selection == null ? null : selection.getVersion(), confirmed, connected, "UNVERIFIED", "UNKNOWN", blockers);
+                selection == null ? null : selection.getVersion(), confirmed, connected, "UNVERIFIED", "UNKNOWN", blockers, selected == null ? null : selected.character());
     }
 
     private Invitation invitation(GroupInvitation invite) {

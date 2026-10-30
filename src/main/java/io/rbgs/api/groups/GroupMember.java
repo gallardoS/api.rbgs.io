@@ -2,6 +2,7 @@ package io.rbgs.api.groups;
 
 import jakarta.persistence.*;
 import java.util.UUID;
+import java.util.Objects;
 import io.rbgs.api.characters.selection.MatchRole;
 import lombok.*;
 
@@ -13,7 +14,7 @@ public class GroupMember {
     @Id @Column(name = "account_id") private UUID accountId;
     @Column(name = "group_id", nullable = false) private UUID groupId;
     @Column(name = "joined_order", nullable = false, insertable = false) private Long joinedOrder;
-    @Enumerated(EnumType.STRING) @Column(name = "display_role") private MatchRole displayRole;
+    @Enumerated(EnumType.STRING) @Column(name = "display_role", nullable = false) private MatchRole displayRole = MatchRole.DPS;
     @Column(name = "display_role_version", nullable = false) private long displayRoleVersion;
     @Column(name = "ready_revision") private Long readyRevision;
     @Column(name = "ready_season_id") private UUID readySeasonId;
@@ -23,9 +24,10 @@ public class GroupMember {
     public GroupMember(UUID accountId, UUID groupId) { this.accountId = accountId; this.groupId = groupId; }
     public void moveTo(UUID groupId, long joinedOrder) {
         this.groupId = groupId; this.joinedOrder = joinedOrder;
-        displayRole = null; displayRoleVersion = 0; unready();
+        displayRole = MatchRole.DPS; displayRoleVersion = 0; unready();
     }
     public void displayRole(MatchRole role) {
+        Objects.requireNonNull(role, "A lobby role is required");
         if (displayRole != role) { displayRole = role; displayRoleVersion++; }
     }
     public void confirm(long revision, UUID seasonId, long seasonVersion, long selectionVersion) {

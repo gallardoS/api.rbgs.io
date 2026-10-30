@@ -1,5 +1,6 @@
 package io.rbgs.api.characters.selection;
 import java.util.UUID;
+import java.util.Objects;
 import io.rbgs.api.seasons.RatingSubjectType;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -17,7 +18,7 @@ public class SeasonSelection {
     @Enumerated(EnumType.STRING)
     @Column(name = "rating_subject_type", nullable = false, length = 16) private RatingSubjectType ratingSubjectType;
     @Enumerated(EnumType.STRING)
-    @Column(name = "match_role", length = 16) private MatchRole matchRole;
+    @Column(name = "match_role", nullable = false, length = 16) private MatchRole matchRole = MatchRole.DPS;
     @Column(name = "captain_consent", nullable = false) private boolean captainConsent;
     @Column(name = "companion_device_id") private UUID companionDeviceId;
     @Version @Column(nullable = false) private Long version;
@@ -30,7 +31,7 @@ public class SeasonSelection {
     public void choose(UUID characterId, RatingSubjectType mode, MatchRole role, boolean captainConsent) {
         this.characterId = characterId;
         this.ratingSubjectType = mode;
-        this.matchRole = role;
+        this.matchRole = Objects.requireNonNull(role, "A SoloQ role is required");
         this.captainConsent = captainConsent;
     }
     public void useDevice(UUID deviceId) { this.companionDeviceId = deviceId; }

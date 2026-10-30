@@ -242,7 +242,7 @@ paths:
     post:
       operationId: updatePremadeDisplayRole
       security: [{ webSession: [] }]
-      summary: Update the authenticated member's optional lobby role label
+      summary: Update the authenticated member's selected lobby role label
       description: Requires CSRF and current membership. The role is visual only, never a premade admission or composition requirement. Uses a member-specific role version; does not change the roster revision or SoloQ selection. The returned snapshot is visible to members on refresh.
       requestBody:
         required: true
@@ -1558,8 +1558,13 @@ components:
       allOf:
         - { $ref: '#/components/schemas/PlayCharacterReference' }
         - type: object
-          required: [region, name, realm]
+          required: [region, name, realm, character]
           properties:
+            character:
+              anyOf:
+                - { $ref: '#/components/schemas/WowCharacter' }
+                - { type: 'null' }
+              description: Selected provider profile refreshed by the verified picker; legacy choices may have no profile yet.
             region: { type: string, enum: [EU, NA] }
             name: { type: string }
             realm: { type: string }
@@ -1583,7 +1588,7 @@ components:
         groupId: { type: string, format: uuid }
         captainName: { type: string }
         recipientName: { type: string }
-        expiresAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: Server deadline, 60 seconds after creation or renewal. Each invitation expires independently. }
     PremadeGroup:
       type: object
       required: [id, captainId, revision, region, lobbyCode, members, invitations, queueReady, blockers]
@@ -1601,14 +1606,19 @@ components:
           maxItems: 10
           items:
             type: object
-            required: [accountId, displayName, captain, characterName, realm, role, roleVersion, selectionVersion, confirmed, companionConnected, addonStatus, gamePresence, blockers]
+            required: [accountId, displayName, captain, characterName, realm, role, roleVersion, selectionVersion, confirmed, companionConnected, addonStatus, gamePresence, blockers, character]
             properties:
               accountId: { type: string, format: uuid }
               displayName: { type: string }
               captain: { type: boolean }
+              character:
+                anyOf:
+                  - { $ref: '#/components/schemas/WowCharacter' }
+                  - { type: 'null' }
+                description: Only the selected provider character, shared privately with lobby members; excludes WoW account IDs, tokens and the remaining catalog. No competitive statistics are invented.
               characterName: { type: [string, 'null'] }
               realm: { type: [string, 'null'] }
-              role: { type: [string, 'null'], enum: [FC, HEALER, DPS, null], description: Optional visual lobby label; independent of SoloQ and never used to balance premades }
+              role: { type: string, enum: [FC, HEALER, DPS], default: DPS, description: Always-selected visual lobby label; defaults to DPS for new memberships and cannot be cleared. Independent of SoloQ and never used to balance premades. }
               roleVersion: { type: integer, minimum: 0 }
               selectionVersion: { type: [integer, 'null'], minimum: 0 }
               confirmed: { type: boolean, description: Version-bound member confirmation; not proof of eligibility }
@@ -1617,7 +1627,7 @@ components:
               gamePresence: { type: string, enum: [UNKNOWN] }
               blockers:
                 type: array
-                items: { type: string, enum: [ACCOUNT_UNAVAILABLE, SEASON_UNAVAILABLE, SELECTION_REQUIRED, SELECTION_INVALID, COMPANION_DISCONNECTED, CAPTURE_PERMISSION_REQUIRED, ADDON_STATUS_UNVERIFIED, MATCH_UNRESOLVED] }
+                items: { type: string, enum: [PLAY_CHARACTER_REQUIRED, REGION_MISMATCH, ACCOUNT_UNAVAILABLE, SEASON_UNAVAILABLE, SELECTION_REQUIRED, SELECTION_INVALID, COMPANION_DISCONNECTED, CAPTURE_PERMISSION_REQUIRED, ADDON_STATUS_UNVERIFIED, MATCH_UNRESOLVED] }
         invitations:
           type: array
           description: Outgoing invitations visible only to the captain
@@ -1922,7 +1932,7 @@ components:
         source: { type: string, enum: [DECLARED, BLIZZARD_VERIFIED] }
         ratingSubjectType: { type: string, enum: [ACCOUNT, CHARACTER] }
         ratingSubjectId: { type: string, format: uuid, description: "Prospective account or character subject; no rating record is created" }
-        role: { type: [string, 'null'], enum: [FC, HEALER, DPS, null], description: Competitive SoloQ role; may be unset for Premade-only character selection }
+        role: { type: string, enum: [FC, HEALER, DPS], default: DPS, description: Competitive SoloQ role; defaults to DPS for a new Premade-only selection and cannot be cleared. Existing SoloQ preferences are preserved. }
         captainConsent: { type: boolean }
         version: { type: integer, format: int64, minimum: 0 }
         validForSeason: { type: boolean, description: "Stored mode/provenance match the current season; not proof of fresh ownership, setup readiness or queue eligibility" }
@@ -1965,7 +1975,7 @@ components:
         namespace:
           type: string
           enum: [profile-classic1x-eu, profile-classic-eu, profile-classic1x-us, profile-classic-us, profile-classicann-eu, profile-classicann-us]
-          description: Source branch and region, part of identity alongside account/realm/character IDs. Anniversary namespaces are returned only by the temporary moderator test endpoint; the ordinary preview is unchanged. The web displays us as NA.
+          description: Source branch and region, part of identity alongside account/realm/character IDs. The ordinary Play picker includes level-60+ Classic and Anniversary characters; this display profile does not establish Forever eligibility. The web displays us as NA.
         avatarUrl:
           type: [string, 'null']
           format: uri
