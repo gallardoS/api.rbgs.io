@@ -101,13 +101,16 @@ class GroupIntegrationTests {
     private void conflict(Runnable action) { assertEquals(409, assertThrows(ResponseStatusException.class, action::run).getStatusCode().value()); }
 
     @SuppressWarnings("unchecked")
-    private org.springframework.test.web.servlet.MvcResult stream(int player) throws Exception {
+    private jakarta.servlet.http.Cookie streamCookie(int player) {
         var session = sessions.createSession();
         session.setAttribute(org.springframework.security.web.context.HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
                 new org.springframework.security.core.context.SecurityContextImpl(auth(player)));
         sessions.save(session); streamSessions.add(session.getId());
         // MOCK web environment uses Spring Session's default cookie name.
-        var result = mvc.perform(get("/api/v1/me/group-events").cookie(new jakarta.servlet.http.Cookie("SESSION", session.getId())))
+        return new jakarta.servlet.http.Cookie("SESSION", session.getId());
+    }
+    private org.springframework.test.web.servlet.MvcResult stream(int player) throws Exception {
+        var result = mvc.perform(get("/api/v1/me/group-events").cookie(streamCookie(player)))
             .andExpect(status().isOk()).andExpect(request().asyncStarted())
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(header().string("X-Accel-Buffering", "no")).andReturn();
@@ -162,13 +165,29 @@ class GroupIntegrationTests {
         assertEquals(target.id(), service.own(auth(0)).id());
         assertEquals(source.id(), service.own(auth(2)).id());
     }
-    @Test void sseRejectsAnonymousAndSuspendedAccountsAndBoundsConnections() throws Exception {
+    @Test void sseRejectsAnonymousAndSuspendedAccounts() throws Exception {
         mvc.perform(get("/api/v1/me/group-events")).andExpect(status().isUnauthorized());
         db.update("UPDATE rbgs.accounts SET account_status='SUSPENDED' WHERE id=?", players.get(1).id());
-        mvc.perform(get("/api/v1/me/group-events").with(login(1))).andExpect(status().isForbidden());
-        for (int i = 0; i < 4; i++) stream(0);
-        mvc.perform(get("/api/v1/me/group-events").with(login(0))).andExpect(status().isTooManyRequests());
+        mvc.perform(get("/api/v1/me/group-events").cookie(streamCookie(1))).andExpect(status().isForbidden());
+        assertEquals(0, streams.activeConnections());
+    }
+    @Test void sseBoundsConnectionsPerAccountAndReleasesSlots() throws Exception {
+        var connections = new ArrayList<org.springframework.test.web.servlet.MvcResult>();
+        for (int i = 0; i < 4; i++) connections.add(stream(0));
+        streams.heartbeat();
+        for (var connection : connections) await(() -> connection.getResponse().getContentAsString().contains("event:ping"));
+        assertEquals(4, streams.activeConnections());
+        // Use the same persisted browser-session path as the four accepted connections.
+        mvc.perform(get("/api/v1/me/group-events").cookie(streamCookie(0))).andExpect(status().isTooManyRequests());
+        assertEquals(4, streams.activeConnections());
+        stream(1);
+        assertEquals(5, streams.activeConnections());
         streams.closeAccount(players.get(0).id());
+        assertEquals(1, streams.activeConnections());
+        stream(0);
+        assertEquals(2, streams.activeConnections());
+        streams.closeAccount(players.get(0).id());
+        streams.closeAccount(players.get(1).id());
         assertEquals(0, streams.activeConnections());
     }
     @Test void sseHeartbeatClosesInvalidatedSessionsAndSuspendedAccounts() throws Exception {
