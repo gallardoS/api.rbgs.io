@@ -165,6 +165,30 @@ class GroupIntegrationTests {
         assertEquals(target.id(), service.own(auth(0)).id());
         assertEquals(source.id(), service.own(auth(2)).id());
     }
+    @Test void sseRemovalNoticeIsPrivateCommittedAndNotSentWhenLeaving() throws Exception {
+        var group = join(join(service.create(auth(0)), 0, 1), 0, 2);
+        var captain = stream(0); var target = stream(1); var peer = stream(2);
+        int beforeRollback = changes(target);
+        new org.springframework.transaction.support.TransactionTemplate(transactions).execute(status -> {
+            service.remove(auth(0), group.id(), group.revision(), players.get(1).id());
+            status.setRollbackOnly(); return null;
+        });
+        // A later committed notification is a barrier for the listener after the rollback.
+        db.queryForObject("SELECT pg_notify('rbgs_lobby_changes', ?)", Object.class, players.get(1).id().toString());
+        await(() -> changes(target) > beforeRollback);
+        assertFalse(target.getResponse().getContentAsString().contains("event:removed"));
+        assertEquals(group.id(), service.own(auth(1)).id());
+        var remaining = service.remove(auth(0), group.id(), group.revision(), players.get(1).id());
+        await(() -> target.getResponse().getContentAsString().contains("event:removed"));
+        assertFalse(captain.getResponse().getContentAsString().contains("event:removed"));
+        assertFalse(peer.getResponse().getContentAsString().contains("event:removed"));
+        assertFalse(target.getResponse().getContentAsString().contains(group.id().toString()));
+        assertNull(service.own(auth(1)));
+        int beforeLeave = changes(peer);
+        service.remove(auth(2), remaining.id(), remaining.revision(), players.get(2).id());
+        await(() -> changes(peer) > beforeLeave);
+        assertFalse(peer.getResponse().getContentAsString().contains("event:removed"));
+    }
     @Test void sseRejectsAnonymousAndSuspendedAccounts() throws Exception {
         mvc.perform(get("/api/v1/me/group-events")).andExpect(status().isUnauthorized());
         db.update("UPDATE rbgs.accounts SET account_status='SUSPENDED' WHERE id=?", players.get(1).id());

@@ -36,6 +36,7 @@ public class GroupService {
     private final MatchAssignmentRepository assignments;
     private final GroupJoinLimiter joinLimiter;
     private final PlatformTransactionManager transactionManager;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -233,6 +234,8 @@ public class GroupService {
         members.delete(member);
         members.flush();
         if (group.getRevision() == revision) group.rosterChanged();
+        if (!actor.equals(target)) jdbc.queryForObject("SELECT pg_notify('rbgs_lobby_changes', ?)", Object.class,
+                GroupEventStreams.REMOVED_PREFIX + target);
         return actor.equals(target) ? null : view(group, actor);
     }
 

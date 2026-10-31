@@ -18,6 +18,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /** Account-scoped invalidations shared by every API instance through PostgreSQL LISTEN. */
 @Component
 public class GroupEventStreams {
+    static final String REMOVED_PREFIX = "removed:";
     private final GroupEventAccess access;
     private final String url, username, password;
     private final int maxConnections;
@@ -67,10 +68,15 @@ public class GroupEventStreams {
                     var notifications = pg.getNotifications(1000);
                     if (notifications == null) continue;
                     for (var notification : notifications) {
+                        String payload = notification.getParameter();
+                        boolean membershipRemoved = payload.startsWith(REMOVED_PREFIX);
                         UUID account;
-                        try { account = UUID.fromString(notification.getParameter()); } catch (IllegalArgumentException invalid) { continue; }
+                        try { account = UUID.fromString(membershipRemoved ? payload.substring(REMOVED_PREFIX.length()) : payload); }
+                        catch (IllegalArgumentException invalid) { continue; }
                         var clients = subscribers.get(account);
-                        if (clients != null) clients.forEach(Subscriber::changed);
+                        if (clients != null) clients.forEach(client -> {
+                            if (membershipRemoved) client.membershipRemoved(); else client.changed();
+                        });
                     }
                 }
             } catch (Exception unavailable) {
@@ -105,11 +111,12 @@ public class GroupEventStreams {
         final String sessionId;
         final SseEmitter emitter = new SseEmitter(300_000L);
         final AtomicBoolean removed = new AtomicBoolean(), sending = new AtomicBoolean(), dirty = new AtomicBoolean();
-        final AtomicBoolean ready = new AtomicBoolean(), heartbeat = new AtomicBoolean();
+        final AtomicBoolean ready = new AtomicBoolean(), heartbeat = new AtomicBoolean(), removalNotice = new AtomicBoolean();
         Subscriber(UUID account, String sessionId) { this.account = account; this.sessionId = sessionId; }
         void ready() { ready.set(true); dispatch(); }
         void changed() { dirty.set(true); dispatch(); }
         void ping() { heartbeat.set(true); dispatch(); }
+        void membershipRemoved() { removalNotice.set(true); dirty.set(true); dispatch(); }
         void dispatch() {
             if (removed.get() || !sending.compareAndSet(false, true)) return;
             try { writers.submit(this::drain); } catch (RejectedExecutionException stopped) { sending.set(false); finish(); }
@@ -118,16 +125,18 @@ public class GroupEventStreams {
             try {
                 while (!removed.get()) {
                     boolean initial = ready.getAndSet(false), changed = dirty.getAndSet(false), ping = heartbeat.getAndSet(false);
-                    if (!initial && !changed && !ping) break;
+                    boolean membershipRemoved = removalNotice.getAndSet(false);
+                    if (!initial && !changed && !ping && !membershipRemoved) break;
                     if (ping && !access.valid(account, sessionId)) { finish(); break; }
                     if (initial) emitter.send(SseEmitter.event().name("ready").reconnectTime(3000).data("{}"));
                     if (changed) emitter.send(SseEmitter.event().name("changed").data("{}"));
+                    if (membershipRemoved) emitter.send(SseEmitter.event().name("removed").data("{}"));
                     if (ping) emitter.send(SseEmitter.event().name("ping").data("{}"));
                 }
             } catch (IOException | RuntimeException disconnected) { finish(); }
             finally {
                 sending.set(false);
-                if (!removed.get() && (ready.get() || dirty.get() || heartbeat.get())) dispatch();
+                if (!removed.get() && (ready.get() || dirty.get() || heartbeat.get() || removalNotice.get())) dispatch();
             }
         }
         void finish() { remove(); emitter.complete(); }

@@ -50,12 +50,14 @@ paths:
       summary: Subscribe to private lobby invalidations
       description: >-
         SSE for the current active account, including incoming invitations before joining a group.
-        Events ready, changed and ping carry only {}. On every ready, fetch the authenticated group,
+        Events ready, changed, removed and ping carry only {}. Removed is sent only to a player
+        expelled by the captain after the transaction commits, never for leaving or switching lobbies.
+        The web shows a dismissible 15-second notice. On every ready, fetch the authenticated group,
         invitation and play-context snapshots; events have no replay IDs. Ready advertises a 3000ms
         reconnect delay. Ping runs every 15 seconds and revalidates the stored session and account.
         Streams close after five minutes and reconnect normally. PostgreSQL transactional notifications
         synchronize API instances; rollback never publishes a change. No lobby is created by subscribing.
-        At most four streams per account and 1024 per instance by default. SoloQ and hidden pages
+        At most four streams per account and 1024 per instance by default. Hidden pages
         unsubscribe. While connected the web retains a 60-second health refresh; disconnected clients
         use the existing 15/60-second adaptive polling. This does not enter a matchmaking queue.
       responses:
