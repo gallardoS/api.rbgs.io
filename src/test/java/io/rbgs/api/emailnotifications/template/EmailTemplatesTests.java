@@ -6,6 +6,30 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EmailTemplatesTests {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "de, Bestätige deine Saisonbenachrichtigung, Die Wettkampfsaison hat begonnen",
+        "pt-BR, Confirme seu aviso de temporada, A temporada competitiva começou",
+        "ru, Подтвердите уведомление о начале сезона, Соревновательный сезон начался",
+        "it, Conferma la notifica di inizio stagione, La stagione competitiva è iniziata"
+    })
+    void rendersAdditionalLanguagesWithWorkingWebLinks(
+            String language, String confirmationSubject, String launchSubject) {
+        var templates = templates("https://rbgs.io/");
+        var confirmation = templates.confirmation(language, "confirm-token", "unsubscribe-token");
+        var launch = templates.launch(language, "unsubscribe-token");
+        assertEquals(confirmationSubject, confirmation.subject());
+        assertEquals(launchSubject, launch.subject());
+        assertTrue(confirmation.text().contains("48"));
+        assertTrue(confirmation.text().contains("https://rbgs.io/" + language + "/#season-confirm=confirm-token"));
+        assertTrue(launch.text().contains("https://rbgs.io/" + language + "/play"));
+        for (var message : new EmailMessage[] {confirmation, launch}) {
+            assertTrue(message.html().contains("lang=\"" + language + "\""));
+            assertTrue(message.text().contains("https://rbgs.io/" + language + "/#season-unsubscribe=unsubscribe-token"));
+            assertFalse(message.html().contains("{{"));
+        }
+    }
+
     private EmailTemplates templates(String origin) {
         return new EmailTemplates(new EmailLinks(new EmailNotificationSettings("", "", "", origin, false, 90, false)));
     }

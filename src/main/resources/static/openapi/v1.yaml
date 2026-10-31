@@ -1339,7 +1339,7 @@ paths:
               required: [email, language]
               properties:
                 email: { type: string, format: email, maxLength: 254 }
-                language: { type: string, enum: [en, es, fr] }
+                language: { type: string, enum: [en, es, fr, de, pt-BR, ru, it] }
                 website: { type: string, maxLength: 200, default: '' }
       responses:
         '202': { description: "Request accepted; confirmation may be queued if required" }

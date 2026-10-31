@@ -30,11 +30,14 @@ class EmailSubscriptionControllerTests {
         mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json").content(JSON))
                 .andExpect(status().isAccepted());
         verify(service).subscribe("player@example.com", "es", "");
-        mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json")
-                .content(JSON.replace("\"es\"", "\"fr\""))).andExpect(status().isAccepted());
-        verify(service).subscribe("player@example.com", "fr", "");
+        for (String language : new String[] {"en", "fr", "de", "pt-BR", "ru", "it"}) {
+            mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json")
+                    .content(JSON.replace("\"es\"", "\"" + language + "\""))).andExpect(status().isAccepted());
+            verify(service).subscribe("player@example.com", language, "");
+        }
         for (String invalid : new String[] {
-                JSON.replace("player@example.com", "not-an-email"), JSON.replace("\"es\"", "\"de\"")}) {
+                JSON.replace("player@example.com", "not-an-email"), JSON.replace("\"es\"", "\"ja\""),
+                JSON.replace("\"es\"", "\"pt\""), JSON.replace("\"es\"", "\"pt-PT\"")}) {
             mvc.perform(post("/api/v1/season-notifications").with(csrf()).contentType("application/json").content(invalid))
                     .andExpect(status().isBadRequest());
         }

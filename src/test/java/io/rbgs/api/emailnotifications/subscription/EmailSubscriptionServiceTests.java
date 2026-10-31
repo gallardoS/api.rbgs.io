@@ -40,6 +40,20 @@ class EmailSubscriptionServiceTests {
         when(settings.dailyLimit()).thenReturn(90);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"de", "pt-BR", "ru", "it"})
+    void persistsAdditionalLanguagesAndQueuesLocalizedLaunch(String language) {
+        service.subscribe("player@example.com", language, "");
+        assertEquals(language, jdbc.queryForObject("SELECT language FROM rbgs.email_subscriptions", String.class));
+        String confirmation = jdbc.queryForObject("SELECT plain_text FROM rbgs.email_outbox", String.class);
+        assertTrue(confirmation.contains("http://localhost:5173/" + language + "/#season-confirm="));
+        service.confirm(token(confirmation, "season-confirm"));
+        when(settings.seasonLive()).thenReturn(true);
+        assertEquals(1, service.launch());
+        String launch = jdbc.queryForObject("SELECT plain_text FROM rbgs.email_outbox WHERE kind = 'LAUNCH'", String.class);
+        assertTrue(launch.contains("http://localhost:5173/" + language + "/play"));
+    }
+
     @Test void subscriptionConfirmationAndLaunchAreIdempotentAndRespectCancellation() {
         service.subscribe("Player@Example.com", "es", "");
         service.subscribe("player@example.com", "es", "");

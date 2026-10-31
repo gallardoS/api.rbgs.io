@@ -15,7 +15,7 @@ import lombok.*;
 public class EmailSubscriptionEntity {
     @Id private UUID id;
     @Column(nullable = false, unique = true, length = 254) private String email;
-    @Column(nullable = false, length = 2) private String language;
+    @Column(nullable = false, length = 5) private String language;
     @Column(name = "confirmation_hash", nullable = false, length = 64) private String confirmationHash;
     @Column(name = "confirmation_expires_at", nullable = false) private Instant confirmationExpiresAt;
     @Column(name = "unsubscribe_hash", length = 64) private String unsubscribeHash;
