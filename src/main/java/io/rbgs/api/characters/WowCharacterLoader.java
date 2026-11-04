@@ -15,6 +15,7 @@ import java.util.concurrent.TimeoutException;
 import jakarta.annotation.PreDestroy;
 import io.rbgs.api.characters.dto.CharacterMedia;
 import io.rbgs.api.characters.dto.CharacterProfile;
+import io.rbgs.api.characters.dto.ForeverAccountProfile;
 import io.rbgs.api.characters.dto.WowAccountProfile;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class WowCharacterLoader {
     private static final List<String> NAMESPACES = List.of(
             "profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us", "profile-classic-us",
-            "profile-classicann-eu", "profile-classicann-us");
+            "profile-classicann-eu", "profile-classicann-us", "profile-forever-eu", "profile-forever-us");
     private record RegionalAccount(String region, long id) { }
     private final RestClient client;
     private final ThreadPoolExecutor requests = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
@@ -105,11 +106,7 @@ public class WowCharacterLoader {
             for (String namespace : namespaces) {
                 WowAccountProfile profile;
                 try {
-                    Future<WowAccountProfile> task = submit(() -> client.get()
-                            .uri("https://" + region(namespace) + ".api.blizzard.com/profile/user/wow?namespace="
-                                    + namespace + "&locale=" + locale(namespace))
-                            .headers(headers -> headers.setBearerAuth(token))
-                            .retrieve().body(WowAccountProfile.class), deadline);
+                    Future<WowAccountProfile> task = submit(() -> fetchProfile(token, namespace), deadline);
                     tasks.add(task);
                     profile = await(task, deadline);
                 } catch (RestClientResponseException error) {
@@ -125,13 +122,13 @@ public class WowCharacterLoader {
                         throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid response from Blizzard");
                     }
                     var characters = accounts.computeIfAbsent(new RegionalAccount(region(namespace), account.id()), id -> new ArrayList<>());
-                    account.characters().stream().filter(character -> character.level() >= minimumLevel)
+                    account.characters().stream().filter(character -> character.level() >= (isForever(namespace) && minimumLevel > 0 ? 1 : minimumLevel))
                             .map(character -> basicCharacter(character, namespace))
                             .forEach(characters::add);
                 }
             }
             if (!foundProfile && includeDetails) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW Classic profile in EU or North America");
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW Classic or Forever profile in EU or North America");
             }
             if (!includeDetails) return new WowAccountProfile(accounts.entrySet().stream().map(account ->
                     new WowAccountProfile.WowAccount(account.getKey().id(), List.copyOf(account.getValue()))).toList());
@@ -176,6 +173,52 @@ public class WowCharacterLoader {
         }
     }
 
+    private static boolean isForever(String namespace) {
+        return namespace != null && namespace.matches("profile-forever-(eu|us)");
+    }
+
+    private WowAccountProfile fetchProfile(String token, String namespace) {
+        var response = client.get().uri("https://" + region(namespace)
+                        + ".api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=" + locale(namespace))
+                .headers(headers -> headers.setBearerAuth(token)).retrieve();
+        if (!isForever(namespace)) return response.body(WowAccountProfile.class);
+        var profile = response.body(ForeverAccountProfile.class);
+        if (profile == null || profile.accounts() == null) throw invalidProfile();
+        return new WowAccountProfile(profile.accounts().stream().map(account -> {
+            if (account.characters() == null) throw invalidProfile();
+            return new WowAccountProfile.WowAccount(account.id(), account.characters().stream().map(character -> {
+                if (character.id() <= 0 || character.name() == null || character.name().isBlank()
+                        || character.surname() == null || character.surname().isBlank()
+                        || character.protectedCharacter() == null || character.protectedCharacter().href() == null) throw invalidProfile();
+                long realmId = foreverRealmId(character, namespace);
+                // Blizzard does not return a realm object or ruleset here. Retain the verified internal ID;
+                // do not invent a realm slug or infer a ruleset from its numeric value.
+                var realm = new WowAccountProfile.Realm(realmId, "Forever", "");
+                return new WowAccountProfile.WowCharacter(character.id(), character.name() + " " + character.surname(), realm,
+                        character.playableClass(), character.playableRace(), character.faction(), character.level(),
+                        null, null, namespace, null, character.gender());
+            }).toList());
+        }).toList());
+    }
+
+    private long foreverRealmId(ForeverAccountProfile.Character character, String namespace) {
+        try {
+            var uri = URI.create(character.protectedCharacter().href());
+            if (!"https".equals(uri.getScheme()) || !(region(namespace) + ".api.blizzard.com").equals(uri.getHost())
+                    || uri.getUserInfo() != null || uri.getPort() != -1 || uri.getFragment() != null
+                    || !("namespace=" + namespace).equals(uri.getQuery())) throw invalidProfile();
+            var match = java.util.regex.Pattern.compile("/profile/user/wow/protected-character/([1-9][0-9]*)-([1-9][0-9]*)").matcher(uri.getPath());
+            if (!match.matches() || Long.parseLong(match.group(2)) != character.id()) throw invalidProfile();
+            return Long.parseLong(match.group(1));
+        } catch (IllegalArgumentException error) {
+            throw invalidProfile();
+        }
+    }
+
+    private ResponseStatusException invalidProfile() {
+        return new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid response from Blizzard");
+    }
+
     private WowAccountProfile.WowCharacter basicCharacter(WowAccountProfile.WowCharacter character, String namespace) {
         return new WowAccountProfile.WowCharacter(character.id(), character.name(), character.realm(),
                 character.playableClass(), character.playableRace(), character.faction(), character.level(),
@@ -194,12 +237,16 @@ public class WowCharacterLoader {
         if (System.nanoTime() >= deadline || Thread.currentThread().isInterrupted()) return character;
         String avatar = null;
         String inset = null;
+        String path = isForever(namespace) ? "/profile/wow/character/{name}" : "/profile/wow/character/{realm}/{name}";
+        Object[] identity = isForever(namespace)
+                ? new Object[] { character.name().toLowerCase(Locale.ROOT).replace(' ', '-') }
+                : new Object[] { character.realm().slug(), character.name().toLowerCase(Locale.ROOT) };
         try {
             CharacterMedia media = client.get().uri(builder -> builder
                     .scheme("https").host(region(namespace) + ".api.blizzard.com")
-                    .path("/profile/wow/character/{realm}/{name}/character-media")
+                    .path(path + "/character-media")
                     .queryParam("namespace", namespace).queryParam("locale", locale(namespace))
-                    .build(character.realm().slug(), character.name().toLowerCase(Locale.ROOT)))
+                    .build(identity))
                     .headers(headers -> headers.setBearerAuth(token)).retrieve().body(CharacterMedia.class);
             if (media != null && media.assets() != null) {
                 avatar = media.assets().stream().filter(asset -> "avatar".equals(asset.key()))
@@ -215,9 +262,9 @@ public class WowCharacterLoader {
         try {
             CharacterProfile profile = System.nanoTime() >= deadline || Thread.currentThread().isInterrupted() ? null : client.get().uri(builder -> builder
                     .scheme("https").host(region(namespace) + ".api.blizzard.com")
-                    .path("/profile/wow/character/{realm}/{name}")
+                    .path(path)
                     .queryParam("namespace", namespace).queryParam("locale", locale(namespace))
-                    .build(character.realm().slug(), character.name().toLowerCase(Locale.ROOT)))
+                    .build(identity))
                     .headers(headers -> headers.setBearerAuth(token)).retrieve().body(CharacterProfile.class);
             if (profile != null) {
                 guild = profile.guild();

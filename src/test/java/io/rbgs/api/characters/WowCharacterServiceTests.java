@@ -69,7 +69,7 @@ class WowCharacterServiceTests {
             var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
             var service = service(builder);
             for (String namespace : List.of("profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us",
-                    "profile-classic-us", "profile-classicann-eu", "profile-classicann-us", "profile-eu", "profile-us")) {
+                    "profile-classic-us", "profile-classicann-eu", "profile-classicann-us", "profile-forever-eu", "profile-forever-us", "profile-eu", "profile-us")) {
                 boolean us = namespace.endsWith("-us");
                 var request = server.expect(requestTo("https://" + (us ? "us" : "eu")
                         + ".api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=" + (us ? "en_US" : "en_GB")))
@@ -361,6 +361,8 @@ class WowCharacterServiceTests {
     private void expectMissingAnniversary(MockRestServiceServer server) {
         expectMissingProfile(server, "profile-classicann-eu");
         expectMissingProfile(server, "profile-classicann-us");
+        expectMissingProfile(server, "profile-forever-eu");
+        expectMissingProfile(server, "profile-forever-us");
     }
 
     private void expectMissingNorthAmerica(MockRestServiceServer server) {
@@ -409,21 +411,21 @@ class WowCharacterServiceTests {
         var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
         var first = service.currentCharacters(auth);
         assertSame(first, service.currentCharacters(auth));
-        assertEquals(6, calls.get());
+        assertEquals(8, calls.get());
         var token = auth.getAccessToken();
         service.currentCharacters(new OAuth2AuthorizedClient(auth.getClientRegistration(), "other-account", token));
-        assertEquals(12, calls.get());
+        assertEquals(16, calls.get());
         var rotated = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, "rotated-token",
                 token.getIssuedAt(), token.getExpiresAt(), token.getScopes());
         service.currentCharacters(new OAuth2AuthorizedClient(auth.getClientRegistration(), "user", rotated));
-        assertEquals(18, calls.get());
+        assertEquals(24, calls.get());
         assertEquals(401, assertThrows(ResponseStatusException.class,
                 () -> service.currentCharacters(client(Set.of("wow.profile"), Instant.now().minusSeconds(1))))
                 .getStatusCode().value());
         assertEquals(403, assertThrows(ResponseStatusException.class,
                 () -> service.currentCharacters(client(Set.of("openid"), Instant.now().plusSeconds(60))))
                 .getStatusCode().value());
-        assertEquals(18, calls.get());
+        assertEquals(24, calls.get());
     }
 
     @Test
@@ -435,7 +437,7 @@ class WowCharacterServiceTests {
         var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
         service.currentCharacters(auth);
         service.currentCharacters(auth);
-        assertEquals(12, calls.get());
+        assertEquals(16, calls.get());
     }
 
     @Test
@@ -461,7 +463,7 @@ class WowCharacterServiceTests {
             assertThrows(java.util.concurrent.TimeoutException.class, () -> second.get(50, TimeUnit.MILLISECONDS));
             release.countDown();
             assertSame(first.get(2, TimeUnit.SECONDS), second.get(2, TimeUnit.SECONDS));
-            assertEquals(6, calls.get());
+            assertEquals(8, calls.get());
         } finally { release.countDown(); }
     }
 
@@ -476,6 +478,8 @@ class WowCharacterServiceTests {
         var release = new CountDownLatch(1);
         server.expect(ExpectedCount.manyTimes(), anything()).andRespond(request -> {
             if (request.getURI().getPath().equals("/profile/user/wow")) {
+                if (request.getURI().getQuery().contains("profile-forever-"))
+                    return withResourceNotFound().createResponse(request);
                 return withSuccess(ownedCharacters(8), MediaType.APPLICATION_JSON).createResponse(request);
             }
             calls.incrementAndGet();
@@ -520,7 +524,7 @@ class WowCharacterServiceTests {
         assertEquals(504, assertThrows(ResponseStatusException.class, () -> service.currentCharacters(auth))
                 .getStatusCode().value());
         assertTrue(service.currentCharacters(auth).wowAccounts().isEmpty());
-        assertEquals(7, calls.get());
+        assertEquals(9, calls.get());
     }
 
     private AtomicInteger emptyProfiles(MockRestServiceServer server) {
@@ -564,14 +568,14 @@ class WowCharacterServiceTests {
         var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
         service.currentCharacters(auth);
         var first = service.currentAnniversaryTestCharacters(auth);
-        assertEquals(8, calls.get());
+        assertEquals(10, calls.get());
         assertSame(first, service.currentAnniversaryTestCharacters(auth));
-        assertEquals(8, calls.get());
+        assertEquals(10, calls.get());
         assertEquals(401, assertThrows(ResponseStatusException.class, () -> service.currentAnniversaryTestCharacters(
                 client(Set.of("wow.profile"), Instant.now().minusSeconds(1)))).getStatusCode().value());
         assertEquals(403, assertThrows(ResponseStatusException.class, () -> service.currentAnniversaryTestCharacters(
                 client(Set.of("openid"), Instant.now().plusSeconds(60)))).getStatusCode().value());
-        assertEquals(8, calls.get());
+        assertEquals(10, calls.get());
     }
 
     @Test
@@ -656,6 +660,99 @@ class WowCharacterServiceTests {
         for (int i = 0; i < count; i++) characters.add("{\"id\":" + i + ",\"name\":\"Player" + i
                 + "\",\"realm\":{\"id\":1,\"slug\":\"realm\"},\"level\":60}");
         return "{\"wow_accounts\":[{\"id\":7,\"characters\":[" + String.join(",", characters) + "]}]}";
+    }
+
+    @Test
+    void foreverListsReservedNamesInBothRegionsWithIndependentIdentityAndOptionalDetails() {
+        for (var presentRegions : List.of(Set.of("eu"), Set.of("us"), Set.of("eu", "us"))) {
+            var builder = RestClient.builder();
+            var server = MockRestServiceServer.bindTo(builder).build();
+            var service = service(builder);
+            var detailPaths = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
+            server.expect(ExpectedCount.manyTimes(), anything()).andExpect(header("Authorization", "Bearer private-token"))
+                    .andRespond(request -> {
+                        var uri = request.getURI();
+                        String region = uri.getHost().startsWith("us.") ? "us" : "eu";
+                        if (uri.getPath().equals("/profile/user/wow")) {
+                            if (!uri.getQuery().contains("profile-forever-") || !presentRegions.contains(region))
+                                return withResourceNotFound().createResponse(request);
+                            assertTrue(uri.getQuery().contains("locale=" + (region.equals("us") ? "en_US" : "en_GB")));
+                            return withSuccess(foreverProfile(region), MediaType.APPLICATION_JSON).createResponse(request);
+                        }
+                        assertTrue(uri.getPath().equals("/profile/wow/character/sw-sw")
+                                || uri.getPath().equals("/profile/wow/character/sw-sw/character-media"));
+                        detailPaths.add(region + uri.getPath());
+                        return withResourceNotFound().createResponse(request);
+                    });
+            var auth = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
+            var result = service.currentCharacters(auth);
+            assertSame(result, service.currentCharacters(auth));
+            assertEquals(presentRegions.size(), result.wowAccounts().size());
+            for (var account : result.wowAccounts()) {
+                assertEquals(7, account.id());
+                var character = account.characters().getFirst();
+                assertEquals(1, character.level());
+                assertEquals("Sw Sw", character.name());
+                assertEquals(6856, character.realm().id());
+                assertEquals("Forever", character.realm().name());
+                assertEquals("", character.realm().slug());
+                assertEquals("FEMALE", character.gender().type());
+                assertNull(character.avatarUrl());
+                assertEquals(42, character.id());
+            }
+            assertEquals(presentRegions.stream().map(r -> "profile-forever-" + r).collect(java.util.stream.Collectors.toSet()),
+                    result.wowAccounts().stream().flatMap(a -> a.characters().stream()).map(c -> c.namespace()).collect(java.util.stream.Collectors.toSet()));
+            assertEquals(presentRegions.size() * 2, detailPaths.size());
+            assertEquals(presentRegions.stream().map(r -> r.equals("us") ? "NA" : "EU").sorted().toList(), service.currentRegions(auth));
+            server.verify();
+        }
+    }
+
+    @Test
+    void foreverInvalidProtectedIdentityFailsWithoutFollowingProviderLinks() {
+        for (String invalid : List.of("https://attacker.example", "https://us.api.blizzard.com",
+                "https://eu.api.blizzard.com:444", "https://eu.api.blizzard.com@attacker.example")) {
+            var builder = RestClient.builder();
+            var server = MockRestServiceServer.bindTo(builder).build();
+            var service = service(builder);
+            server.expect(ExpectedCount.manyTimes(), anything()).andRespond(request -> {
+                assertEquals("/profile/user/wow", request.getURI().getPath());
+                return request.getURI().getQuery().contains("profile-forever-eu")
+                        ? withSuccess(foreverProfile("eu").replace("https://eu.api.blizzard.com", invalid), MediaType.APPLICATION_JSON).createResponse(request)
+                        : withResourceNotFound().createResponse(request);
+            });
+            assertEquals(502, assertThrows(ResponseStatusException.class, () -> service.currentCharacters(
+                    client(Set.of("wow.profile"), Instant.now().plusSeconds(60)))).getStatusCode().value());
+            server.verify();
+        }
+    }
+
+    @Test
+    void foreverFailureNeverReturnsAnApparentlyCompleteCatalog() {
+        for (var status : List.of(org.springframework.http.HttpStatus.UNAUTHORIZED,
+                org.springframework.http.HttpStatus.FORBIDDEN, org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)) {
+            var builder = RestClient.builder();
+            var server = MockRestServiceServer.bindTo(builder).build();
+            var service = service(builder);
+            server.expect(ExpectedCount.manyTimes(), anything()).andRespond(request ->
+                    request.getURI().getQuery().contains("profile-forever-us")
+                            ? withStatus(status).body("sensitive-provider-details").createResponse(request)
+                            : withSuccess("{\"wow_accounts\":[]}", MediaType.APPLICATION_JSON).createResponse(request));
+            var error = assertThrows(ResponseStatusException.class, () -> service.currentCharacters(
+                    client(Set.of("wow.profile"), Instant.now().plusSeconds(60))));
+            assertEquals(status.is5xxServerError() ? 502 : status.value(), error.getStatusCode().value());
+            assertFalse(error.getMessage().contains("sensitive-provider-details"));
+            server.verify();
+        }
+    }
+
+    private String foreverProfile(String region) {
+        return """
+                {"wow_accounts":[{"id":7,"characters":[{"id":42,"name":"Sw","surname":"Sw","level":1,
+                "gender":{"type":"FEMALE","name":"Female"},
+                "playable_class":{"id":11,"name":"Druid"},
+                "protected_character":{"href":"https://%s.api.blizzard.com/profile/user/wow/protected-character/6856-42?namespace=profile-forever-%s"}}]}]}
+                """.formatted(region, region);
     }
 
     private OAuth2AuthorizedClient client(Set<String> scopes, Instant expiresAt) {

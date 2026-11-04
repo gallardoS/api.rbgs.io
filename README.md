@@ -52,7 +52,7 @@ The contract is in [OpenAPI](src/main/resources/static/openapi/v1.yaml), served 
 | --- | --- |
 | `GET /api/v1/health`, `GET /api/v1/readiness` | Process health and database readiness. |
 | `GET /api/v1/auth/me` | Current account; login uses `/oauth2/authorization/battle-net`. |
-| `GET /api/v1/characters/me` | Authenticated player's characters. |
+| `GET /api/v1/characters/me` | Owned Forever characters (level 1+) and Classic/Anniversary characters (level 60+) in EU and NA. |
 | `GET /api/v1/play/context`, `PUT /api/v1/me/selection` | Season context and character/match preferences. |
 | `GET /api/v1/me/group`, `GET /api/v1/me/group-invitations` | Own private lobby and incoming invitations. |
 | `POST /api/v1/groups`, `POST /api/v1/groups/join`, `/api/v1/groups/{id}/*` | Create/join a lobby, manage invitations/captain/code and confirm preparation; no queue admission. |

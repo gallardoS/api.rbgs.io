@@ -18,7 +18,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
-/** A verified Classic picker preference, independent of season/device readiness and Forever ownership. */
+/** An authenticated provider picker preference, independent of competitive season/device readiness. */
 @Service
 @RequiredArgsConstructor
 public class PlayCharacterService {
@@ -31,7 +31,7 @@ public class PlayCharacterService {
     private final JdbcTemplate db;
     private final PlatformTransactionManager transactions;
 
-    public record Reference(@NotBlank @Pattern(regexp = "profile-classic(1x|ann)?-(eu|us)") String namespace,
+    public record Reference(@NotBlank @Pattern(regexp = "profile-(classic(1x|ann)?|forever)-(eu|us)") String namespace,
             @Positive long wowAccountId, @Positive long realmId, @Positive long characterId) { }
     public record Selected(String namespace, long wowAccountId, long realmId, long characterId,
             String region, String name, String realm, WowCharacter character) { }
@@ -53,7 +53,8 @@ public class PlayCharacterService {
                 .filter(account -> account.id() == reference.wowAccountId())
                 .flatMap(account -> account.characters().stream())
                 .filter(c -> Objects.equals(c.namespace(), reference.namespace()) && c.id() == reference.characterId()
-                        && c.realm().id() == reference.realmId() && c.level() >= 60).toList();
+                        && c.realm() != null && c.realm().id() == reference.realmId()
+                        && c.level() >= (c.namespace().startsWith("profile-forever-") ? 1 : 60)).toList();
         if (matches.size() != 1) throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "Choose an available character from your Battle.net account");
         var character = matches.getFirst();
         String region = character.namespace().endsWith("-us") ? "NA" : "EU";

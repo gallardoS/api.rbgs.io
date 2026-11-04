@@ -105,6 +105,11 @@ class GroupIntegrationTests {
         var session = sessions.createSession();
         session.setAttribute(org.springframework.security.web.context.HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
                 new org.springframework.security.core.context.SecurityContextImpl(auth(player)));
+        // MockMvc's csrf() helper installs a session-backed token repository. Seed its
+        // token before streaming so the first SSE flush and request completion cannot
+        // concurrently insert the same new session attribute.
+        session.setAttribute(org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository.class.getName() + ".CSRF_TOKEN",
+                new org.springframework.security.web.csrf.DefaultCsrfToken("X-CSRF-TOKEN", "_csrf", UUID.randomUUID().toString()));
         sessions.save(session); streamSessions.add(session.getId());
         // MOCK web environment uses Spring Session's default cookie name.
         return new jakarta.servlet.http.Cookie("SESSION", session.getId());
@@ -224,7 +229,7 @@ class GroupIntegrationTests {
         streams.closeAccount(players.get(1).id());
         assertEquals(0, streams.activeConnections());
     }
-    @Test void sseHeartbeatClosesInvalidatedSessionsAndSuspendedAccounts() throws Exception {
+    @RepeatedTest(10) void sseHeartbeatClosesInvalidatedSessionsAndSuspendedAccounts() throws Exception {
         var first = stream(0); var second = stream(1);
         db.update("DELETE FROM rbgs.spring_session WHERE session_id=?", streamSessions.getFirst());
         streams.heartbeat(); await(() -> streams.activeConnections() == 1);
@@ -289,6 +294,28 @@ class GroupIntegrationTests {
         service.remove(auth(0),group.id(),group.revision(),players.get(0).id());
         assertEquals("EU",playCharacters.save(auth(0),null,eu).region());
     }
+    @Test void foreverLevelOneCanBeSelectedInEuAndNaWhileLobbyRegionStaysFixed() throws Exception {
+        var characters = java.util.stream.Stream.of("eu", "us").map(region ->
+                new io.rbgs.api.characters.dto.WowAccountProfile.WowCharacter(42,"Sw Sw",
+                        new io.rbgs.api.characters.dto.WowAccountProfile.Realm(6856,"Forever",""),
+                        null,null,null,1,null,null,"profile-forever-"+region,null,null)).toList();
+        when(provider.currentCharacters(any())).thenReturn(new io.rbgs.api.characters.dto.WowAccountProfile(List.of(
+                new io.rbgs.api.characters.dto.WowAccountProfile.WowAccount(7,characters))));
+        var reference="{\"namespace\":\"profile-forever-us\",\"wowAccountId\":7,\"realmId\":6856,\"characterId\":42}";
+        mvc.perform(put("/api/v1/me/play-character").with(login(0)).with(oauth2Client("battle-net").principalName(subjects.get(0)))
+                .with(csrf()).contentType("application/json").content(reference)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.region").value("NA")).andExpect(jsonPath("$.name").value("Sw Sw"))
+                .andExpect(jsonPath("$.character.level").value(1));
+        var group = service.create(auth(0));
+        var eu = new io.rbgs.api.characters.PlayCharacterService.Reference("profile-forever-eu",7,6856,42);
+        conflict(() -> playCharacters.save(auth(0),null,eu));
+        assertEquals("profile-forever-us",playCharacters.find(players.get(0).id()).namespace());
+        assertFalse(service.own(auth(0)).queueReady());
+        service.remove(auth(0),group.id(),group.revision(),players.get(0).id());
+        assertEquals("EU",playCharacters.save(auth(0),null,eu).region());
+        assertEquals("profile-forever-eu",playCharacters.find(players.get(0).id()).namespace());
+    }
+
     @Test void playCharacterAndRegionEndpointsRequireAuthenticationAndCsrf() throws Exception {
         mvc.perform(get("/api/v1/me/play-character")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/me/play-character").with(login(0))).andExpect(status().isOk())
