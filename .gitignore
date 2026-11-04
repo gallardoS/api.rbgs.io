@@ -34,3 +34,8 @@ build/
 .vscode/
 
 /LOCAL.md
+
+# Local work files
+/.scratch/
+/artifacts/
+NUL
