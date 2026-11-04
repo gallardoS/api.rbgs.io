@@ -63,6 +63,47 @@ class WowCharacterServiceTests {
     void closeContexts() { contexts.forEach(AnnotationConfigApplicationContext::close); }
 
     @Test
+    void profileRegionsIncludeLowLevelClassicAndRetailCharactersAndCacheTheResult() {
+        for (var expected : List.of(List.of("EU"), List.of("NA"), List.of("EU", "NA"), List.<String>of())) {
+            var builder = RestClient.builder();
+            var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+            var service = service(builder);
+            for (String namespace : List.of("profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us",
+                    "profile-classic-us", "profile-classicann-eu", "profile-classicann-us", "profile-eu", "profile-us")) {
+                boolean us = namespace.endsWith("-us");
+                var request = server.expect(requestTo("https://" + (us ? "us" : "eu")
+                        + ".api.blizzard.com/profile/user/wow?namespace=" + namespace + "&locale=" + (us ? "en_US" : "en_GB")))
+                        .andExpect(header("Authorization", "Bearer private-token"));
+                boolean present = expected.contains(us ? "NA" : "EU")
+                        && (namespace.equals("profile-classicann-eu") || namespace.equals("profile-us"));
+                if (present) request.andRespond(withSuccess("""
+                        {"wow_accounts":[{"id":7,"characters":[{"id":42,"name":"Low",
+                        "realm":{"id":1,"slug":"realm"},"level":1}]}]}
+                        """, MediaType.APPLICATION_JSON));
+                else request.andRespond(withResourceNotFound());
+            }
+            var client = client(Set.of("wow.profile"), Instant.now().plusSeconds(60));
+            assertEquals(expected, service.currentRegions(client));
+            assertEquals(expected, service.currentRegions(client));
+            server.verify();
+        }
+    }
+
+    @Test
+    void profileRegionsRequireAuthorizationAndNeverReturnPartialRegionsOnProviderFailure() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).build();
+        var service = service(builder);
+        assertEquals(403, assertThrows(ResponseStatusException.class,
+                () -> service.currentRegions(client(Set.of(), Instant.now().plusSeconds(60)))).getStatusCode().value());
+        server.expect(requestTo("https://eu.api.blizzard.com/profile/user/wow?namespace=profile-classic1x-eu&locale=en_GB"))
+                .andRespond(withServerError());
+        assertEquals(502, assertThrows(ResponseStatusException.class,
+                () -> service.currentRegions(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)))).getStatusCode().value());
+        server.verify();
+    }
+
+    @Test
     void fetchesOwnedCharactersWithUserToken() {
         var builder = RestClient.builder();
         var server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();

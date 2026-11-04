@@ -80,7 +80,21 @@ public class WowCharacterLoader {
         return loadCharacters(token, deadline, List.of("profile-classicann-eu", "profile-classicann-us"), 1);
     }
 
+    @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'PROFILE_REGIONS'}", sync = true)
+    public List<String> loadRegions(WowCharacterService.CacheKey key, String token, long deadline) {
+        var namespaces = new ArrayList<>(NAMESPACES);
+        namespaces.addAll(List.of("profile-eu", "profile-us"));
+        return loadCharacters(token, deadline, namespaces, 0, false).wowAccounts().stream()
+                .flatMap(account -> account.characters().stream())
+                .map(character -> character.namespace().endsWith("-us") ? "NA" : "EU")
+                .distinct().sorted().toList();
+    }
+
     private WowAccountProfile loadCharacters(String token, long deadline, List<String> namespaces, int minimumLevel) {
+        return loadCharacters(token, deadline, namespaces, minimumLevel, true);
+    }
+
+    private WowAccountProfile loadCharacters(String token, long deadline, List<String> namespaces, int minimumLevel, boolean includeDetails) {
         if (System.nanoTime() >= deadline) {
             throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "Blizzard character loading timed out");
         }
@@ -116,9 +130,11 @@ public class WowCharacterLoader {
                             .forEach(characters::add);
                 }
             }
-            if (!foundProfile) {
+            if (!foundProfile && includeDetails) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW Classic profile in EU or North America");
             }
+            if (!includeDetails) return new WowAccountProfile(accounts.entrySet().stream().map(account ->
+                    new WowAccountProfile.WowAccount(account.getKey().id(), List.copyOf(account.getValue()))).toList());
             var details = new LinkedHashMap<WowAccountProfile.WowCharacter, Future<WowAccountProfile.WowCharacter>>();
             for (var characters : accounts.values()) {
                 for (var character : characters) {

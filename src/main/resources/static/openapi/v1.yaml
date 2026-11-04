@@ -1704,6 +1704,24 @@ paths:
         '403': { description: "Active account, current persisted moderator role or valid CSRF token required" }
         '409': { description: "Season-live flag is disabled" }
         '503': { description: "Email delivery has not been configured" }
+  /characters/regions:
+    get:
+      operationId: getCurrentUserWowRegions
+      summary: List regions containing the authenticated user's WoW characters
+      description: Requires an active Battle.net session and wow.profile permission. Checks EU and North America across Classic, Anniversary and Retail without a level requirement or character detail requests. Returns EU, NA, both in that order, or an empty array when no characters exist. Missing provider profiles are skipped; other failures never return a partial region list. No-store; never uses the legacy account region default.
+      responses:
+        '200':
+          description: Detected character regions
+          content:
+            application/json:
+              schema:
+                type: array
+                uniqueItems: true
+                items: { type: string, enum: [EU, NA] }
+        '401': { description: Missing session or expired Battle.net token }
+        '403': { description: Inactive account or missing WoW profile access }
+        '502': { description: Blizzard unavailable or invalid response }
+        '504': { description: Blizzard request timed out }
   /characters/me:
     get:
       operationId: getCurrentUserCharacters

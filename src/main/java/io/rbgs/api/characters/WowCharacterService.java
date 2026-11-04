@@ -39,6 +39,20 @@ public class WowCharacterService {
     }
 
     private WowAccountProfile currentCharacters(OAuth2AuthorizedClient authorizedClient, boolean anniversaryTest) {
+        CacheKey key = authorizedKey(authorizedClient);
+        var token = authorizedClient.getAccessToken();
+        long deadline = System.nanoTime() + loadTimeout.toNanos();
+        return anniversaryTest ? loader.loadAnniversaryTestCharacters(key, token.getTokenValue(), deadline)
+                : loader.loadCharacters(key, token.getTokenValue(), deadline);
+    }
+
+    public java.util.List<String> currentRegions(OAuth2AuthorizedClient authorizedClient) {
+        CacheKey key = authorizedKey(authorizedClient);
+        return loader.loadRegions(key, authorizedClient.getAccessToken().getTokenValue(),
+                System.nanoTime() + loadTimeout.toNanos());
+    }
+
+    private CacheKey authorizedKey(OAuth2AuthorizedClient authorizedClient) {
         if (authorizedClient == null || authorizedClient.getAccessToken() == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in with Battle.net again");
         }
@@ -49,11 +63,8 @@ public class WowCharacterService {
         if (!token.getScopes().contains("wow.profile")) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Sign in again and grant access to your WoW profile");
         }
-        CacheKey key = new CacheKey(authorizedClient.getClientRegistration().getRegistrationId(),
+        return new CacheKey(authorizedClient.getClientRegistration().getRegistrationId(),
                 authorizedClient.getPrincipalName(), digest(token.getTokenValue()));
-        long deadline = System.nanoTime() + loadTimeout.toNanos();
-        return anniversaryTest ? loader.loadAnniversaryTestCharacters(key, token.getTokenValue(), deadline)
-                : loader.loadCharacters(key, token.getTokenValue(), deadline);
     }
 
     private static String digest(String token) {

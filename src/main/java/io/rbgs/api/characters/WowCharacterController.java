@@ -14,6 +14,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class WowCharacterController {
     private final WowCharacterService characters;
 
+    @GetMapping("/regions")
+    public org.springframework.http.ResponseEntity<java.util.List<String>> currentRegions(
+            @RegisteredOAuth2AuthorizedClient("battle-net") OAuth2AuthorizedClient client) {
+        return org.springframework.http.ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+                .body(characters.currentRegions(client));
+    }
+
     @GetMapping("/me")
     public WowAccountProfile currentCharacters(
             @RegisteredOAuth2AuthorizedClient("battle-net") OAuth2AuthorizedClient client) {

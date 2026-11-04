@@ -75,6 +75,7 @@ public class SecurityConfiguration {
                 .requestMatchers(HttpMethod.POST, "/api/v1/me/matches/*/disputes", "/api/v1/me/matches/*/disputes/replies", "/api/v1/me/matches/*/read").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
                 .requestMatchers("/api/v1/groups/**", "/api/v1/me/group", "/api/v1/me/group-events", "/api/v1/me/group-invitations/**", "/api/v1/characters/me", "/api/v1/play/context", "/api/v1/me/selection", "/api/v1/me/premade-selection", "/api/v1/me/play-character", "/api/v1/device-pairings/approve", "/api/v1/device-pairings/browser/**", "/api/v1/device-launches", "/api/v1/device-launches/*", "/api/v1/devices/**").access(new AccountAuthorizationManager(accountServices, null, false))
+                .requestMatchers("/api/v1/characters/regions").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/tester/**").access(new AccountAuthorizationManager(accountServices, "TESTER", false))
                 .requestMatchers("/api/v1/moderation/**").access(new AccountAuthorizationManager(accountServices, "MODERATOR", false))
                 .anyRequest().denyAll();
