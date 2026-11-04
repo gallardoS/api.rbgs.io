@@ -37,7 +37,7 @@ public class MatchDisputeService {
         var account = accounts.currentUser(auth);
         if (account == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         var persisted = accountRepository.findById(account.id()).orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
-        if (!"ACTIVE".equals(persisted.getStatus()) || (moderator && !"MODERATOR".equals(persisted.getRole())))
+        if (!"ACTIVE".equals(persisted.getStatus()) || (moderator && !io.rbgs.api.identity.AccountAuthorizationManager.allowsRole(persisted.getRole(), "MODERATOR")))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         return account.id();
     }

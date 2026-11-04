@@ -83,6 +83,32 @@ class AccountSessionAuthorizationTests {
     }
 
     @Test
+    void testerAndAdminUseSimulatorWithPersistedRole() throws Exception {
+        String subject = UUID.randomUUID().toString();
+        Account account = accounts.upsert(ISSUER, subject, "Tester#1234");
+        Cookie session = session(subject, "USER");
+        String queue = "/api/v1/tester/queue";
+        try {
+            mvc.perform(get(queue).param("scenario", "NORMAL").cookie(session)).andExpect(status().isForbidden());
+            database.update("UPDATE rbgs.accounts SET account_role = 'TESTER' WHERE id = ?", account.id());
+            mvc.perform(get(queue).param("scenario", "NO_CAPTAINS").cookie(session))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.room.teamA.length()").value(10))
+                    .andExpect(jsonPath("$.room.teamB.length()").value(10));
+            mvc.perform(get(queue).param("scenario", "NO_HEALERS").cookie(session))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.waiting").value(20));
+            mvc.perform(get(MODERATION).cookie(session)).andExpect(status().isForbidden());
+            database.update("UPDATE rbgs.accounts SET account_role = 'MODERATOR' WHERE id = ?", account.id());
+            mvc.perform(get(queue).param("scenario", "NORMAL").cookie(session)).andExpect(status().isOk());
+            mvc.perform(get(MODERATION).cookie(session)).andExpect(status().isOk());
+            database.update("UPDATE rbgs.accounts SET account_role = 'ADMIN' WHERE id = ?", account.id());
+            mvc.perform(get(queue).param("scenario", "NORMAL").cookie(session)).andExpect(status().isOk());
+            mvc.perform(get(MODERATION).cookie(session)).andExpect(status().isOk());
+        } finally {
+            database.update("DELETE FROM rbgs.accounts WHERE id = ?", account.id());
+        }
+    }
+
+    @Test
     void missingAccountCannotUseAnExistingSession() throws Exception {
         String subject = UUID.randomUUID().toString();
         Account account = accounts.upsert(ISSUER, subject, "Player#1234");

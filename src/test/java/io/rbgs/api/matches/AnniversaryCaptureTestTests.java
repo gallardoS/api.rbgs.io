@@ -75,6 +75,31 @@ class AnniversaryCaptureTestTests {
         mvc.perform(get(PATH+"/characters").with(login())).andExpect(status().isForbidden());
     }
 
+    @Test void testerCanCreateAnOwnedTestThroughTesterRoutesOnly() throws Exception {
+        String testerPath = "/api/v1/tester/capture-tests/anniversary";
+        db.update("UPDATE rbgs.accounts SET account_role='TESTER' WHERE id=?", accountId);
+        entityManager.clear();
+        mvc.perform(get(testerPath + "/characters").with(login())).andExpect(status().isOk());
+        mvc.perform(post(testerPath).with(login()).contentType("application/json").content(body(reference())))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(PATH).with(login()).with(csrf()).contentType("application/json").content(body(reference())))
+                .andExpect(status().isForbidden());
+        assertEquals(0, count());
+        mvc.perform(post(testerPath).with(login()).with(csrf()).contentType("application/json").content(body(reference())))
+                .andExpect(status().isUnprocessableContent());
+        db.update("""
+                INSERT INTO rbgs.play_characters(account_id,namespace,wow_account_id,realm_id,character_id,region,name,realm)
+                VALUES (?, 'profile-classicann-eu',7,6409,42,'EU','OwnedPlayer','FixtureRealm')
+                """, accountId);
+        var changed = reference();
+        changed.put("characterId", 999);
+        mvc.perform(post(testerPath).with(login()).with(csrf()).contentType("application/json").content(body(changed)))
+                .andExpect(status().isUnprocessableContent());
+        mvc.perform(post(testerPath).with(login()).with(csrf()).contentType("application/json").content(body(reference())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.assignments[0].accountId").value(accountId.toString()));
+        assertEquals(1, count());
+    }
+
     @Test void creationRequiresCsrfAndAnUnambiguousOwnedProviderReference() throws Exception {
         mvc.perform(post(PATH).with(login()).contentType("application/json").content(body(reference()))).andExpect(status().isForbidden());
         for (String field : List.of("namespace", "wowAccountId", "realmId", "characterId")) {
@@ -85,6 +110,31 @@ class AnniversaryCaptureTestTests {
         var ref = reference(); ref.put("name", "ForgedPlayer");
         mvc.perform(post(PATH).with(login()).with(csrf()).contentType("application/json").content(body(ref))).andExpect(status().isUnprocessableContent());
         assertEquals(0, count());
+    }
+
+    @Test void testerDiagnosticTestMustUseThePlayCharacter() throws Exception {
+        db.update("UPDATE rbgs.accounts SET account_role='TESTER' WHERE id=?", accountId);
+        entityManager.clear();
+        String path = "/api/v1/tester/capture-tests";
+        var player = new LinkedHashMap<String,Object>();
+        player.put("accountId", accountId.toString());
+        player.put("teamKey", null);
+        player.put("character", Map.of("name", "OtherPlayer", "realm", "FixtureRealm"));
+        var request = Map.of("armMinutes", 60, "testKind", "CAPTURE_ONLY",
+                "expectedMapProfile", "DARKSPEAR_DIAGNOSTIC", "roster", List.of(player));
+        mvc.perform(post(path).with(login()).with(csrf()).contentType("application/json").content(json.encode(request)))
+                .andExpect(status().isUnprocessableContent());
+        db.update("""
+                INSERT INTO rbgs.play_characters(account_id,namespace,wow_account_id,realm_id,character_id,region,name,realm)
+                VALUES (?, 'profile-classic1x-eu',7,6409,42,'EU','PlayPlayer','FixtureRealm')
+                """, accountId);
+        mvc.perform(post(path).with(login()).with(csrf()).contentType("application/json").content(json.encode(request)))
+                .andExpect(status().isUnprocessableContent());
+        assertEquals(0, count());
+        player.put("character", Map.of("name", "PlayPlayer", "realm", "FixtureRealm"));
+        mvc.perform(post(path).with(login()).with(csrf()).contentType("application/json").content(json.encode(request)))
+                .andExpect(status().isOk());
+        assertEquals(1, count());
     }
 
     @Test void creationFreezesServerResolvedCharacterAndProviderProvenance() throws Exception {

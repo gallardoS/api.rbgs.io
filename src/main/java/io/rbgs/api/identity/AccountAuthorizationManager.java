@@ -23,6 +23,12 @@ public final class AccountAuthorizationManager implements AuthorizationManager<R
         this.allowAnonymous = allowAnonymous;
     }
 
+    public static boolean allowsRole(String actual, String required) {
+        return required == null || required.equals(actual)
+                || "MODERATOR".equals(actual) && "TESTER".equals(required)
+                || "ADMIN".equals(actual) && ("MODERATOR".equals(required) || "TESTER".equals(required));
+    }
+
     @Override
     public AuthorizationDecision authorize(Supplier<? extends Authentication> authentication,
             RequestAuthorizationContext context) {
@@ -42,7 +48,7 @@ public final class AccountAuthorizationManager implements AuthorizationManager<R
         try {
             Account account = service.findByIdentity(user.getIdToken().getIssuer().toString(), user.getSubject());
             return new AuthorizationDecision(account != null && "ACTIVE".equals(account.status())
-                    && (requiredRole == null || requiredRole.equals(account.role())));
+                    && allowsRole(account.role(), requiredRole));
         } catch (NoSuchElementException missingAccount) {
             return new AuthorizationDecision(false);
         }

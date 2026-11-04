@@ -23,13 +23,14 @@ import org.springframework.web.server.ResponseStatusException;
 /** Temporary moderator test selection; it never changes season or ranked eligibility. */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/moderation/capture-tests/anniversary")
+@RequestMapping({"/api/v1/moderation/capture-tests/anniversary", "/api/v1/tester/capture-tests/anniversary"})
 public class AnniversaryCaptureTestController {
     private final WowCharacterService characters;
     private final ControlledMatchService controlled;
     private final MatchAvailability availability;
     private final CaptureJson json;
     private final ObjectProvider<OAuth2AuthorizedClientRepository> clients;
+    private final io.rbgs.api.characters.PlayCharacterService playCharacters;
     private final Cache<String, AtomicInteger> limits = Caffeine.newBuilder().maximumSize(10000)
             .expireAfterWrite(Duration.ofMinutes(1)).build();
 
@@ -64,6 +65,12 @@ public class AnniversaryCaptureTestController {
         String namespace = text(ref.get("namespace"));
         if (!Set.of("profile-classicann-eu", "profile-classicann-us").contains(namespace)) throw invalid();
         long accountId = number(ref.get("wowAccountId")), realmId = number(ref.get("realmId")), characterId = number(ref.get("characterId"));
+        if (request.getRequestURI().startsWith("/api/v1/tester/")) {
+            var selected = playCharacters.current(auth);
+            if (selected == null || !namespace.equals(selected.namespace()) || accountId != selected.wowAccountId()
+                    || realmId != selected.realmId() || characterId != selected.characterId())
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT, "Select this character in Play before confirming the test");
+        }
         var owned = characters.currentAnniversaryTestCharacters(client(auth, request));
         var matches = new ArrayList<ControlledMatchService.SelectedTestCharacter>();
         for (var account : owned.wowAccounts()) {

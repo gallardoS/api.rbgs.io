@@ -18,6 +18,7 @@ public class MatchEntity {
     @Column(name = "capture_start_deadline", nullable = false, updatable = false) private Instant captureStartDeadline;
     @Column(name = "expected_roster", nullable = false, updatable = false, columnDefinition = "text") private String expectedRoster;
     @Column(name = "cancelled_at") private Instant cancelledAt;
+    @Column(name = "competition_ended_at") private Instant competitionEndedAt;
     @Column(nullable = false, length = 32, updatable = false) private String profile;
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 24, updatable = false) private MatchMode mode;
@@ -58,6 +59,13 @@ public class MatchEntity {
     }
 
     public void cancel(Instant at) { if (cancelledAt == null) cancelledAt = at; }
+
+    /** An authoritative end-of-play transition releases competition independently of result review. */
+    public void endCompetition(Instant at) {
+        java.util.Objects.requireNonNull(at);
+        if (at.isBefore(createdAt)) throw new IllegalArgumentException("Competition cannot end before creation");
+        if (competitionEndedAt == null) competitionEndedAt = at;
+    }
 
     public void verificationDeadline(Instant at) {
         if (verificationDeadline == null || at.isBefore(verificationDeadline)) verificationDeadline = at;

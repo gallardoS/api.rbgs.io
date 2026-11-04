@@ -6,6 +6,294 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /local/soloq:
+    get:
+      operationId: getSoloQueueLab
+      security: []
+      summary: Read the isolated local simulation and initialize its session and CSRF cookie
+      description: Registered only with both local and soloq-lab profiles, on loopback with a dedicated lab database. Contains only synthetic actors. It does not open normal SoloQ, connect to WoW, issue addon codes or change ratings. Default and production profiles deny access. Room and ticket versions form a resynchronizable authoritative snapshot. English, Spanish and French development UI uses this separate contract.
+      responses:
+        '200':
+          description: No-store simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '401': { description: Simulator not enabled in this profile }
+  /local/soloq/events:
+    get:
+      operationId: streamSoloQueueLab
+      security: [{ soloQueueLabSession: [] }]
+      summary: Subscribe to synthetic actor invalidations
+      description: Initial ready and changed events require a full snapshot resync. No replay history is claimed. The isolated server samples committed state every second across at most eight connections, sends heartbeat events, and closes streams on session revocation or actor changes. Reconnect and fallback polling recover persisted state across restarts. Ordinary web queues remain unavailable.
+      responses:
+        '200':
+          description: No-store SSE invalidations with snapshot revision
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '409': { description: Create a simulation first }
+        '429': { description: Local stream capacity reached }
+  /local/soloq/reset:
+    post:
+      operationId: resetSoloQueueLab
+      security: [{ soloQueueLabSession: [] }]
+      summary: Reset only the dedicated simulation
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [scenario], properties: { scenario: { type: string, enum: [NORMAL, NO_CAPTAINS, NO_HEALERS] } } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/actor:
+    post:
+      operationId: selectSoloQueueLabActor
+      security: [{ soloQueueLabSession: [] }]
+      summary: Choose a synthetic actor for this lab session
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [accountId], properties: { accountId: { type: string, format: uuid } } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/selection:
+    put:
+      operationId: selectSoloQueueLabRole
+      security: [{ soloQueueLabSession: [] }]
+      summary: Set an idle synthetic actor's role and captain consent
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [role, captainConsent], properties: { role: { type: string, enum: [FC, HEALER, DPS] }, captainConsent: { type: boolean } } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/queue:
+    post:
+      operationId: enterSoloQueueLab
+      security: [{ soloQueueLabSession: [] }]
+      summary: Queue the selected synthetic actor
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/queue/{ticket}:
+    delete:
+      operationId: cancelSoloQueueLab
+      security: [{ soloQueueLabSession: [] }]
+      summary: Cancel the selected actor's waiting ticket
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      parameters:
+        - { name: ticket, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/players:
+    post:
+      operationId: addSoloQueueLabPlayers
+      security: [{ soloQueueLabSession: [] }]
+      summary: Queue nineteen or ninety-nine synthetic peers
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [count], properties: { count: { type: integer, enum: [19, 99] } } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/rooms/{room}/response:
+    post:
+      operationId: respondSoloQueueLabRoom
+      security: [{ soloQueueLabSession: [] }]
+      summary: Accept or decline the selected actor's proposal room
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [accept], properties: { accept: { type: boolean } } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /local/soloq/rooms/{room}/test-acceptances:
+    post:
+      operationId: acceptSoloQueueLabPeers
+      security: [{ soloQueueLabSession: [] }]
+      summary: Explicitly simulate the other nineteen acceptances
+      description: Isolated local lab only. Requires the RBGS_SOLOQ_LAB session and X-XSRF-TOKEN header matching RBGS_SOLOQ_LAB_XSRF. All actors and eligibility inputs are synthetic. The server controls acceptance and preparation deadlines; no caller timestamp, MMR or game-eligibility bypass is accepted.
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: No-store authoritative simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueLabSnapshot' }
+        '400': { description: Invalid simulation command }
+        '403': { description: CSRF unavailable }
+        '404': { description: Actor, ticket or room unavailable to this session }
+        '409': { description: Command conflicts with current state }
+  /me/solo-queue:
+    get:
+      operationId: getOwnSoloQueue
+      security: [{ webSession: [] }]
+      summary: Read private SoloQ availability and an existing reservation
+      description: No-store authoritative status. Initializes CSRF. Admission remains unavailable until Forever, addon/game-presence signals and the shared match-room handoff are implemented and verified. Classic or Anniversary picker data never establishes eligibility. Ticket snapshots, hidden MMR and other accounts are not exposed.
+      responses:
+        '200':
+          description: Current availability and own ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueStatus' }
+        '401': { description: Sign in required }
+        '403': { description: Account unavailable }
+    post:
+      operationId: enterSoloQueue
+      security: [{ webSession: [] }]
+      summary: Request SoloQ admission with a versioned selection
+      description: Requires CSRF and current season/selection versions. Revalidates account, selection, device, verified game signals and confirmed competitive data. Missing adapters fail closed with 409; there is no client or configuration bypass.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seasonId, seasonVersion, selectionVersion]
+              properties:
+                seasonId: { type: string, format: uuid }
+                seasonVersion: { type: integer, format: int64 }
+                selectionVersion: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: Admitted or existing own reservation recovered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueStatus' }
+        '400': { description: Missing or invalid versioned selection }
+        '409':
+          description: Admission unavailable; no search started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueStatus' }
+        '401': { description: Sign in required }
+        '403': { description: Account or CSRF unavailable }
+  /me/solo-queue/events:
+    get:
+      operationId: streamOwnSoloQueue
+      security: [{ webSession: [] }]
+      summary: Receive account-scoped SoloQ invalidations
+      description: No-store SSE ready/changed events and heartbeats; always reload GET status after ready, changed or reconnect. Persisted session/account access is revalidated before delivery. Poll status if streaming is unavailable.
+      responses:
+        '200':
+          description: Private invalidation stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { description: Sign in required }
+        '403': { description: Account unavailable }
+        '429': { description: Too many streams for this account }
+        '503': { description: Stream capacity reached }
+  /me/solo-queue/rooms/{room}/response:
+    post:
+      operationId: respondOwnSoloQueueRoom
+      security: [{ webSession: [] }]
+      summary: Accept or decline only your own place in a proposed match
+      description: Requires CSRF and membership. All twenty players must individually accept within sixty seconds. Rechecks every participant before acceptance. Decline or timeout cancels and releases every reservation. The twentieth acceptance transactionally creates and validates the shared Match and its twenty assignments; handoff failure rolls back the final acceptance. Repeated acceptance is idempotent.
+      parameters:
+        - { in: path, name: room, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accept]
+              properties:
+                accept: { type: boolean }
+      responses:
+        '200':
+          description: Authoritative own queue and room status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoloQueueStatus' }
+        '400': { description: Missing accept decision }
+        '401': { description: Sign in required }
+        '403': { description: Account or CSRF unavailable }
+        '404': { description: Room unavailable to this account }
+        '409': { description: Proposal no longer awaiting acceptance }
+  /me/solo-queue/{ticket}:
+    delete:
+      operationId: cancelOwnSoloQueueTicket
+      security: [{ webSession: [] }]
+      summary: Cancel an own waiting ticket
+      description: Requires CSRF. Cancellation and proposal reservation share a PostgreSQL transaction lock across workers. Repeating a completed cancellation succeeds. A reserved proposal must be handled by the room lifecycle; queue cancellation cannot release its accounts.
+      parameters:
+        - { name: ticket, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Cancelled; no-store }
+        '401': { description: Sign in required }
+        '403': { description: Account or CSRF unavailable }
+        '404': { description: Ticket unavailable to this account }
+        '409': { description: Ticket already reserved for a proposal }
   /me/play-character:
     get:
       operationId: getOwnPlayCharacter
@@ -1538,6 +1826,11 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/PremadeGroup' }
   securitySchemes:
+    soloQueueLabSession:
+      type: apiKey
+      in: cookie
+      name: RBGS_SOLOQ_LAB
+      description: Synthetic actor session in the explicitly enabled isolated local simulator only.
     webSession:
       type: apiKey
       in: cookie
@@ -1548,6 +1841,91 @@ components:
       scheme: bearer
       description: Opaque account-bound rbgs.io device token, not a Battle.net token.
   schemas:
+    SoloQueueLabMember:
+      type: object
+      required: [accountId, name, role, captain, accepted]
+      properties:
+        accountId: { type: string, format: uuid }
+        name: { type: string }
+        role: { type: string, enum: [FC, HEALER, DPS] }
+        captain: { type: boolean }
+        accepted: { type: boolean }
+    SoloQueueLabRoom:
+      type: object
+      required: [id, source, status, acceptanceDeadline, preparationDeadline, cancellationReason, version, teamA, teamB]
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string, enum: [SIMULATION, FOREVER] }
+        status: { type: string, enum: [PROPOSED, PREPARING, CANCELLED] }
+        acceptanceDeadline: { type: string, format: date-time }
+        preparationDeadline: { type: [string, 'null'], format: date-time }
+        cancellationReason: { type: [string, 'null'] }
+        version: { type: integer, format: int64 }
+        teamA: { type: array, minItems: 10, maxItems: 10, items: { $ref: '#/components/schemas/SoloQueueLabMember' } }
+        teamB: { type: array, minItems: 10, maxItems: 10, items: { $ref: '#/components/schemas/SoloQueueLabMember' } }
+    SoloQueueLabSnapshot:
+      type: object
+      required: [simulation, generation, scenario, serverTime, accountId, players, queueDepth, ticket, room, revision]
+      properties:
+        simulation: { type: boolean, const: true }
+        generation: { type: [string, 'null'], format: uuid }
+        scenario: { type: string, enum: [NORMAL, NO_CAPTAINS, NO_HEALERS] }
+        serverTime: { type: string, format: date-time }
+        accountId: { type: [string, 'null'], format: uuid }
+        queueDepth: { type: integer, minimum: 0 }
+        revision: { type: string, description: Opaque committed-state fingerprint; always resync after reconnect. }
+        players:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [id, name, role, captainConsent]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              role: { type: string, enum: [FC, HEALER, DPS] }
+              captainConsent: { type: boolean, description: 'SoloQ volunteer priority. False does not prevent automatic captain assignment when the team has no volunteer.' }
+        ticket:
+          type: [object, 'null']
+          properties:
+            id: { type: string, format: uuid }
+            state: { type: string, enum: [QUEUED, PROPOSED] }
+            enteredAt: { type: string, format: date-time }
+            version: { type: integer, format: int64 }
+        room:
+          oneOf:
+            - { type: 'null' }
+            - { $ref: '#/components/schemas/SoloQueueLabRoom' }
+    SoloQueueRoom:
+      allOf:
+        - { $ref: '#/components/schemas/SoloQueueLabRoom' }
+        - type: object
+          properties:
+            source: { type: string, const: FOREVER }
+      description: Private real-player room. Source is FOREVER; names contain character and realm, never private Battle.net contact tags. Hidden MMR is excluded.
+    SoloQueueStatus:
+      type: object
+      required: [available, blockers, ticket, room, matchId, serverTime, revision]
+      properties:
+        available: { type: boolean }
+        blockers: { type: array, items: { type: string } }
+        serverTime: { type: string, format: date-time }
+        revision: { type: string }
+        matchId: { type: [string, 'null'], format: uuid }
+        room:
+          anyOf:
+            - { $ref: '#/components/schemas/SoloQueueRoom' }
+            - { type: 'null' }
+        ticket:
+          type: [object, 'null']
+          required: [id, state, enteredAt, proposalId, version, cancellationReason]
+          properties:
+            id: { type: string, format: uuid }
+            state: { type: string, enum: [QUEUED, PROPOSED, CANCELLED] }
+            enteredAt: { type: string, format: date-time }
+            proposalId: { type: [string, 'null'], format: uuid }
+            version: { type: integer, format: int64 }
+            cancellationReason: { type: [string, 'null'] }
     PlayCharacterReference:
       type: object
       required: [namespace, wowAccountId, realmId, characterId]
@@ -1908,7 +2286,7 @@ components:
             name: { type: string, minLength: 1, maxLength: 100, description: "Nonblank text without control characters" }
             realm: { type: string, minLength: 1, maxLength: 100, description: "Provisional declaration uses the selected Classic character realm; not verified Forever ownership" }
         role: { type: string, enum: [FC, HEALER, DPS] }
-        captainConsent: { type: boolean }
+        captainConsent: { type: boolean, description: 'SoloQ volunteer priority. False does not prevent automatic captain assignment when the team has no volunteer.' }
     PremadeSelectionRequest:
       type: object
       required: [seasonId, seasonVersion, companionDeviceId]
@@ -1935,7 +2313,7 @@ components:
         ratingSubjectType: { type: string, enum: [ACCOUNT, CHARACTER] }
         ratingSubjectId: { type: string, format: uuid, description: "Prospective account or character subject; no rating record is created" }
         role: { type: string, enum: [FC, HEALER, DPS], default: DPS, description: Competitive SoloQ role; defaults to DPS for a new Premade-only selection and cannot be cleared. Existing SoloQ preferences are preserved. }
-        captainConsent: { type: boolean }
+        captainConsent: { type: boolean, description: 'SoloQ volunteer priority. False does not prevent automatic captain assignment when the team has no volunteer.' }
         version: { type: integer, format: int64, minimum: 0 }
         validForSeason: { type: boolean, description: "Stored mode/provenance match the current season; not proof of fresh ownership, setup readiness or queue eligibility" }
     SeasonNotificationLink:

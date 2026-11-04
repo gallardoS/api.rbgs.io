@@ -25,16 +25,28 @@ public class ControlledMatchService {
     private final AccountRepository accountRepository;
     private final MatchAvailability availability;
     private final MatchDisputeService disputes;
+    private final io.rbgs.api.matchmaking.QueueTicketRepository queueTickets;
 
     private void enabled() { availability.requireControlledEnabled(); }
     private UUID moderator(Authentication auth) {
         var account = accounts.currentUser(auth);
-        if (account == null || !"MODERATOR".equals(account.role())) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        if (account == null || !io.rbgs.api.identity.AccountAuthorizationManager.allowsRole(account.role(), "MODERATOR")) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         var persisted = accountRepository.findById(account.id()).orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
-        if (!"ACTIVE".equals(persisted.getStatus()) || !"MODERATOR".equals(persisted.getRole())) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        if (!"ACTIVE".equals(persisted.getStatus()) || !io.rbgs.api.identity.AccountAuthorizationManager.allowsRole(persisted.getRole(), "MODERATOR")) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         return account.id();
     }
 
+
+    private UUID testActor(Authentication auth) {
+        var account = accounts.currentUser(auth);
+        if (account == null) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        var persisted = accountRepository.findById(account.id()).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.FORBIDDEN));
+        if (!"ACTIVE".equals(persisted.getStatus())
+                || !Set.of("MODERATOR", "TESTER", "ADMIN").contains(persisted.getRole()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        return account.id();
+    }
 
     @Transactional
     public Map<String,Object> create(Authentication auth,Map<String,Object> request) {
@@ -46,7 +58,7 @@ public class ControlledMatchService {
 
     @Transactional
     public Map<String,Object> createAnniversary(Authentication auth, long armMinutes, SelectedTestCharacter selected) {
-        UUID actor = moderator(auth);
+        UUID actor = testActor(auth);
         var row = new LinkedHashMap<String,Object>();
         row.put("accountId", actor.toString()); row.put("teamKey", null);
         row.put("character", Map.of("name", selected.name(), "realm", selected.realm()));
@@ -56,7 +68,8 @@ public class ControlledMatchService {
 
     private Map<String,Object> create(Authentication auth,Map<String,Object> request,SelectedTestCharacter selected) {
         enabled();
-        UUID actor = moderator(auth);
+        UUID actor = testActor(auth);
+        boolean tester = "TESTER".equals(accountRepository.findById(actor).orElseThrow().getRole());
         fields(request, "armMinutes roster", "testKind expectedMapProfile");
         ControlledMatchKind kind;
         try { kind = request.containsKey("testKind") ? ControlledMatchKind.valueOf(text(request.get("testKind"))) : ControlledMatchKind.ROSTER_CONTROLLED; }
@@ -99,6 +112,7 @@ public class ControlledMatchService {
             roster.add(frozen);
             if (row.get("accountId") != null) {
                 UUID owner = uuid(row.get("accountId"));
+                if (tester && !actor.equals(owner)) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
                 if (!owners.add(owner)) throw invalid();
                 if (accountRepository.findById(owner).filter(a -> "ACTIVE".equals(a.getStatus())).isEmpty()) throw invalid();
                 var reporter = new LinkedHashMap<String,Object>();
@@ -109,6 +123,18 @@ public class ControlledMatchService {
             }
         }
         if ((!captureOnly && teams.size() != 2) || reporters.isEmpty()) throw invalid();
+        var lockAccounts = new HashSet<>(owners);
+        lockAccounts.add(actor);
+        for (var owner : lockAccounts.stream().sorted().toList()) {
+            accountRepository.findForSelection(owner).orElseThrow();
+            if (owners.contains(owner) && queueTickets.hasReservation(owner))
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Leave the queue before creating a test assignment");
+        }
+        var actorRow = accountRepository.findForSelection(actor).orElseThrow();
+        if (!"ACTIVE".equals(actorRow.getStatus()) || !Set.of("MODERATOR", "TESTER", "ADMIN").contains(actorRow.getRole()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        if ("TESTER".equals(actorRow.getRole()) && !owners.equals(Set.of(actor)))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         Instant now = Instant.now(), deadline = now.plusSeconds(minutes * 60);
         var match = matches.saveAndFlush(new MatchEntity(actor, now, deadline, json.encode(roster), MatchMode.CONTROLLED_TEST, kind.evidencePolicy(),
                 profile.name(), deadline.plus(profile.maxDuration()).plus(MatchVerification.REPORT_WINDOW)));

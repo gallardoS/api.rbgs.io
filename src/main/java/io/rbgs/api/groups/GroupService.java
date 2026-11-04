@@ -34,6 +34,7 @@ public class GroupService {
     private final CharacterIdentityRepository characters;
     private final DeviceRepository devices;
     private final MatchAssignmentRepository assignments;
+    private final io.rbgs.api.matchmaking.QueueTicketRepository queueTickets;
     private final GroupJoinLimiter joinLimiter;
     private final PlatformTransactionManager transactionManager;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -314,6 +315,7 @@ public class GroupService {
         if (device == null || !device.getGrantedScope().contains("evidence:write")) blockers.add("CAPTURE_PERMISSION_REQUIRED");
         blockers.add("ADDON_STATUS_UNVERIFIED");
         if (assignments.hasBlockingParticipation(id, now)) blockers.add("MATCH_UNRESOLVED");
+        if (queueTickets.hasReservation(id)) blockers.add("MATCH_UNRESOLVED");
         boolean confirmed = season != null && selection != null
                 && Objects.equals(member.getReadyRevision(), group.getRevision())
                 && Objects.equals(member.getReadySeasonId(), season.getId())
@@ -352,8 +354,9 @@ public class GroupService {
     }
     private void requireMatchAvailable(UUID id) {
         // Expired capture-only diagnostics are historical evidence, not an active competitive reservation.
-        // Competitive pending/review results remain blocking until D01 defines earlier release.
-        if (assignments.hasBlockingParticipation(id, Instant.now())) throw conflict("Resolve the current match before joining a group");
+        // D01: an authoritative end-of-play fact releases a result still awaiting review.
+        if (assignments.hasBlockingParticipation(id, Instant.now()) || queueTickets.hasReservation(id))
+            throw conflict("Leave the queue or finish the current match before joining a group");
     }
     private PremadeGroup lockedMember(UUID id, UUID actor, long revision) {
         var group = groups.lockById(id).orElseThrow(GroupService::notFound);

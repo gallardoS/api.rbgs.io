@@ -100,7 +100,7 @@ public class MatchResultService {
     private UUID moderator(Authentication auth) {
         var account = accounts.currentUser(auth);
         if (account == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-        if (accountRepository.findById(account.id()).filter(a -> "ACTIVE".equals(a.getStatus()) && "MODERATOR".equals(a.getRole())).isEmpty())
+        if (accountRepository.findById(account.id()).filter(a -> "ACTIVE".equals(a.getStatus()) && io.rbgs.api.identity.AccountAuthorizationManager.allowsRole(a.getRole(), "MODERATOR")).isEmpty())
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         return account.id();
     }
@@ -152,7 +152,7 @@ public class MatchResultService {
         if (account == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         var persisted = accountRepository.findById(account.id()).orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
         if (!"ACTIVE".equals(persisted.getStatus())) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-        if (!"MODERATOR".equals(persisted.getRole()) && !assignments.existsByMatchIdAndAccountId(id, account.id()))
+        if (!io.rbgs.api.identity.AccountAuthorizationManager.allowsRole(persisted.getRole(), "MODERATOR") && !assignments.existsByMatchIdAndAccountId(id, account.id()))
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         return view(matches.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND)));
     }

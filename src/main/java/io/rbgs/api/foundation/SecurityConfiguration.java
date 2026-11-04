@@ -55,26 +55,35 @@ public class SecurityConfiguration {
             @Value("${rbgs.auth.web-origin:}") String webOrigin) throws Exception {
         boolean local = environment.acceptsProfiles(Profiles.of("local"));
         http.authorizeHttpRequests(authorize -> {
+            if (local && environment.acceptsProfiles(Profiles.of("soloq-lab"))) {
+                authorize.requestMatchers("/api/v1/local/soloq/**", "/api/v1/local/soloq").permitAll();
+                authorize.requestMatchers(request -> request.getDispatcherType()==jakarta.servlet.DispatcherType.ASYNC
+                        && request.getRequestURI().equals("/api/v1/local/soloq/events")).permitAll();
+            }
             if (local) {
                 authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/api-client/approve").access(new AccountAuthorizationManager(accountServices, null, false));
             }
             authorize.requestMatchers(request -> request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
-                    && request.getRequestURI().equals("/api/v1/me/group-events")).permitAll();
+                    && (request.getRequestURI().equals("/api/v1/me/group-events")||request.getRequestURI().equals("/api/v1/me/solo-queue/events"))).permitAll();
             authorize.requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
+                .requestMatchers("/api/v1/me/solo-queue", "/api/v1/me/solo-queue/**").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.GET, "/api/v1/matches/*/result", "/api/v1/capture-tests/*/result").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.GET, "/api/v1/me/matches", "/api/v1/me/matches/*").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.POST, "/api/v1/me/matches/*/disputes", "/api/v1/me/matches/*/disputes/replies", "/api/v1/me/matches/*/read").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/season-notifications", "/api/v1/season-notifications/confirm", "/api/v1/season-notifications/unsubscribe").permitAll()
                 .requestMatchers("/api/v1/groups/**", "/api/v1/me/group", "/api/v1/me/group-events", "/api/v1/me/group-invitations/**", "/api/v1/characters/me", "/api/v1/play/context", "/api/v1/me/selection", "/api/v1/me/premade-selection", "/api/v1/me/play-character", "/api/v1/device-pairings/approve", "/api/v1/device-pairings/browser/**", "/api/v1/device-launches", "/api/v1/device-launches/*", "/api/v1/devices/**").access(new AccountAuthorizationManager(accountServices, null, false))
+                .requestMatchers("/api/v1/tester/**").access(new AccountAuthorizationManager(accountServices, "TESTER", false))
                 .requestMatchers("/api/v1/moderation/**").access(new AccountAuthorizationManager(accountServices, "MODERATOR", false))
                 .anyRequest().denyAll();
         });
+        var csrfCookies=CookieCsrfTokenRepository.withHttpOnlyFalse();
+        if (local && environment.acceptsProfiles(Profiles.of("soloq-lab"))) csrfCookies.setCookieName("RBGS_SOLOQ_LAB_XSRF");
         http.csrf(csrf -> csrf.ignoringRequestMatchers(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, EmailFeedbackController.PATH),
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, ResendFeedbackController.PATH))
-                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRepository(csrfCookies)
                 .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()));
         http.httpBasic(AbstractHttpConfigurer::disable);
         http.formLogin(AbstractHttpConfigurer::disable);

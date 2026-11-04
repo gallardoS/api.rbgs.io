@@ -9,8 +9,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface MatchAssignmentRepository extends JpaRepository<MatchAssignmentEntity, UUID> {
+    java.util.List<MatchAssignmentEntity> findByMatchId(UUID match);
     @Query("select count(a) > 0 from MatchAssignmentEntity a join a.match m where a.accountId=:account "
-            + "and m.cancelledAt is null and m.verificationStatus in ('PENDING', 'REVIEW') "
+            + "and m.cancelledAt is null and m.competitionEndedAt is null and m.verificationStatus in ('PENDING', 'REVIEW') "
             + "and (m.mode <> io.rbgs.api.matches.MatchMode.CONTROLLED_TEST "
             + "or m.evidencePolicy <> io.rbgs.api.matches.MatchEvidencePolicy.CAPTURE_ONLY "
             + "or m.verificationDeadline is null or m.verificationDeadline > :now)")
