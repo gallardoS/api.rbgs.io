@@ -29,5 +29,9 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Create isolated SoloQ test database
+        env:
+          PGPASSWORD: ${{ env.RBGS_DB_PASSWORD }}
+        run: psql --host=localhost --port=55432 --username=rbgs --dbname=postgres --set=ON_ERROR_STOP=1 --command='CREATE DATABASE rbgs_soloq_lab_tests OWNER rbgs;'
       - name: Verify
         run: bash ./mvnw -B verify
