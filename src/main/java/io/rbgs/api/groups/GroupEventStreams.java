@@ -64,7 +64,9 @@ public class GroupEventStreams {
                 listening = true;
                 subscribers.values().forEach(clients -> clients.forEach(Subscriber::ready));
                 var pg = db.unwrap(PGConnection.class);
-                while (running && !subscribers.isEmpty()) {
+                // Keep LISTEN active between subscribers. Otherwise a new stream can receive
+                // ready from the old connection just before it closes and lose notifications.
+                while (running) {
                     var notifications = pg.getNotifications(1000);
                     if (notifications == null) continue;
                     for (var notification : notifications) {

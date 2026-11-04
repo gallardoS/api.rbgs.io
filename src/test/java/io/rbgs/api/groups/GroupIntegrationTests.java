@@ -189,6 +189,16 @@ class GroupIntegrationTests {
         await(() -> changes(peer) > beforeLeave);
         assertFalse(peer.getResponse().getContentAsString().contains("event:removed"));
     }
+    @Test void sseReadyRemainsSubscribedWhenTheLastClientReconnects() throws Exception {
+        for (int attempt = 0; attempt < 10; attempt++) {
+            var client = stream(0);
+            int before = changes(client);
+            db.queryForObject("SELECT pg_notify('rbgs_lobby_changes', ?)", Object.class, players.get(0).id().toString());
+            await(() -> changes(client) > before);
+            streams.closeAccount(players.get(0).id());
+            assertEquals(0, streams.activeConnections());
+        }
+    }
     @Test void sseRejectsAnonymousAndSuspendedAccounts() throws Exception {
         mvc.perform(get("/api/v1/me/group-events")).andExpect(status().isUnauthorized());
         db.update("UPDATE rbgs.accounts SET account_status='SUSPENDED' WHERE id=?", players.get(1).id());
