@@ -47,7 +47,7 @@ public class SoloQueueStore {
         tickets.lockCoordinator();accounts.findForSelection(eligibility.candidate().accountId()).orElseThrow();
         var existing=tickets.active(eligibility.candidate().accountId());
         if(existing.isPresent()) {
-            if(!existing.get().getSource().equals("FOREVER"))throw new IllegalStateException("Account is in another queue");
+            if(!existing.get().getSource().equals("FOREVER")||!existing.get().getQueueType().equals("SOLO"))throw new IllegalStateException("Account is in another queue");
             return existing.get();
         }
         var ticket=new QueueTicket(eligibility.candidate());ticket.realAdmission(eligibility);
@@ -82,7 +82,8 @@ public class SoloQueueStore {
         tickets.lockCoordinator();
         Instant now=clock.get();
         try {
-            var waiting = tickets.findBySourceAndStateOrderByEnteredAtAscAccountIdAsc(source,"QUEUED");
+            var waiting = tickets.findBySourceAndStateOrderByEnteredAtAscAccountIdAsc(source,"QUEUED")
+                    .stream().filter(t -> t.getQueueType().equals("SOLO")).toList();
             var fresh=new HashMap<UUID,SoloQueueCandidate>();
             // Lock/revalidate account exclusivity before reservation, using the admission lock order.
             for (var ticket : waiting.stream().sorted(Comparator.comparing(QueueTicket::getAccountId)).toList()) {

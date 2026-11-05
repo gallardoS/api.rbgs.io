@@ -56,20 +56,22 @@ public class SecurityConfiguration {
         boolean local = environment.acceptsProfiles(Profiles.of("local"));
         http.authorizeHttpRequests(authorize -> {
             if (local && environment.acceptsProfiles(Profiles.of("soloq-lab"))) {
-                authorize.requestMatchers("/api/v1/local/soloq/**", "/api/v1/local/soloq").permitAll();
+                authorize.requestMatchers("/api/v1/local/soloq/**", "/api/v1/local/soloq", "/api/v1/local/premade/**", "/api/v1/local/premade").permitAll();
                 authorize.requestMatchers(request -> request.getDispatcherType()==jakarta.servlet.DispatcherType.ASYNC
-                        && request.getRequestURI().equals("/api/v1/local/soloq/events")).permitAll();
+                        && (request.getRequestURI().equals("/api/v1/local/soloq/events")||request.getRequestURI().equals("/api/v1/local/premade/events"))).permitAll();
             }
             if (local) {
                 authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/api-client/approve").access(new AccountAuthorizationManager(accountServices, null, false));
             }
             authorize.requestMatchers(request -> request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
-                    && (request.getRequestURI().equals("/api/v1/me/group-events")||request.getRequestURI().equals("/api/v1/me/solo-queue/events"))).permitAll();
+                    && (request.getRequestURI().equals("/api/v1/me/group-events")||request.getRequestURI().equals("/api/v1/me/solo-queue/events")
+                        ||request.getRequestURI().equals("/api/v1/me/premade-queue/events"))).permitAll();
             authorize.requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
                 .requestMatchers("/api/v1/me/solo-queue", "/api/v1/me/solo-queue/**").access(new AccountAuthorizationManager(accountServices, null, false))
+                .requestMatchers("/api/v1/me/premade-queue", "/api/v1/me/premade-queue/**").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.GET, "/api/v1/matches/*/result", "/api/v1/capture-tests/*/result").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.GET, "/api/v1/me/matches", "/api/v1/me/matches/*").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.POST, "/api/v1/me/matches/*/disputes", "/api/v1/me/matches/*/disputes/replies", "/api/v1/me/matches/*/read").access(new AccountAuthorizationManager(accountServices, null, false))

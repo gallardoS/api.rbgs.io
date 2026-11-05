@@ -10,7 +10,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 @Configuration
 public class SoloQueueIntegrationConfiguration {
     @Bean @ConditionalOnMissingBean
-    SoloQueueCompetitiveData unavailableCompetitiveData() { return (season,type,subject)->Optional.empty(); }
+    SoloQueueCompetitiveData confirmedCompetitiveData(ConfirmedRatingStore ratings) {
+        return (season,type,subject)->ratings.confirmed(season,ConfirmedRatingStore.Queue.SOLO,type,subject)
+                .map(s->new SoloQueueCompetitiveData.Snapshot(s.seasonId(),s.subjectType(),s.subjectId(),s.mmr(),s.visibleRating(),s.gamesPlayed(),s.priorCaptainAssignments()));
+    }
     @Bean @ConditionalOnMissingBean
     SoloQueueGameGateway unavailableGameGateway() {
         return new SoloQueueGameGateway() {

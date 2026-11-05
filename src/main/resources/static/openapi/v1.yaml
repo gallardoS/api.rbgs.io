@@ -6,6 +6,285 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /local/premade/reset:
+    post:
+      operationId: resetPremadeLab
+      security: [{ soloQueueLabSession: [] }]
+      summary: Replace only the premade simulation generation
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabSetup' }
+        '403': { description: Missing lab CSRF or captain authorization }
+        '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/actor:
+    post:
+      operationId: selectPremadeLabActor
+      security: [{ soloQueueLabSession: [] }]
+      summary: Choose a synthetic player for this session
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [accountId], properties: { accountId: { type: string, format: uuid } } }
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabSetup' }
+        '403': { description: Missing lab CSRF or captain authorization }
+        '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/captain:
+    post:
+      operationId: transferPremadeLabCaptain
+      security: [{ soloQueueLabSession: [] }]
+      summary: Change captain within the selected synthetic group
+      description: Current captain and lab CSRF required. A waiting search is cancelled transactionally with LOBBY_CHANGED and is never automatically requeued. Proposed/preparing rooms freeze the roster and captain until declined or ended.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [accountId], properties: { accountId: { type: string, format: uuid } } }
+      responses:
+        '200':
+          description: No-store updated simulation status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Not the current captain or missing CSRF }
+        '404': { description: Synthetic actor unavailable }
+        '409': { description: Invalid target or a match proposal/preparation holds the roster }
+  /local/premade/opponents:
+    post:
+      operationId: addPremadeLabOpponents
+      security: [{ soloQueueLabSession: [] }]
+      summary: Queue one or nine other synthetic groups
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [count], properties: { count: { type: integer, enum: [1, 9] } } }
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Missing lab CSRF or captain authorization }
+        '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/rooms/{room}/response:
+    post:
+      operationId: respondPremadeLabRoom
+      security: [{ soloQueueLabSession: [] }]
+      summary: Accept or decline individually; decline also ends preparation
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [accept], properties: { accept: { type: boolean } } }
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Missing lab CSRF or captain authorization }
+        '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/rooms/{room}/test-acceptances:
+    post:
+      operationId: acceptPremadeLabPeers
+      security: [{ soloQueueLabSession: [] }]
+      summary: Simulate the other nineteen acceptances while preserving own response
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Missing lab CSRF or captain authorization }
+        '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/{entry}:
+    delete:
+      operationId: cancelPremadeLabQueue
+      security: [{ soloQueueLabSession: [] }]
+      summary: Captain cancels all ten waiting reservations
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      parameters:
+        - { name: entry, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Missing lab CSRF or captain authorization }
+        '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/events:
+    get:
+      operationId: streamPremadeLab
+      security: [{ soloQueueLabSession: [] }]
+      summary: Subscribe to committed simulation-state invalidations
+      description: Isolated local premade lab only. Mutations require the lab CSRF token. No game assignments or ratings are created.
+      responses:
+        '200':
+          description: No-store ready/changed/ping SSE events, with snapshot resync and polling fallback
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /me/premade-queue:
+    get:
+      operationId: getPremadeQueue
+      security: [{ webSession: [] }]
+      summary: Read the caller's private premade queue and shared room
+      description: No-store account-scoped snapshot. Includes current lobby/captain control and blockers. Synthetic tickets, private contact tags and hidden MMR are excluded. Eligibility is resolved per player from the configured season, owned selection, device and game proof plus persisted premade MMR. The default game gateway remains unavailable, so it does not admit real players.
+      responses:
+        '200':
+          description: Current private queue state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeQueueStatus' }
+        '401': { description: Authentication required }
+    post:
+      operationId: enterPremadeQueue
+      security: [{ webSession: [] }]
+      summary: Captain requests admission of the current complete premade
+      description: Requires CSRF and the current lobby revision. No individual readiness actions or role composition apply. Admission revalidates all ten accounts under queue/group/account locks. A verified game adapter and confirmed per-season premade state are mandatory; the unavailable default gateway still returns 409 with blockers. Browser-provided eligibility or MMR is never accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PremadeQueueAdmission' }
+      responses:
+        '200':
+          description: Group admitted atomically or the same waiting admission recovered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeQueueStatus' }
+        '409':
+          description: Admission unavailable or lobby revision changed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/PremadeQueueStatus' }
+                  - { $ref: '#/components/schemas/Problem' }
+        '401': { description: Authentication required }
+        '403': { description: Not the captain or missing CSRF }
+        '404': { description: Lobby unavailable to this account }
+  /me/premade-queue/{entry}:
+    delete:
+      operationId: cancelPremadeQueue
+      security: [{ webSession: [] }]
+      summary: Cancel a waiting premade entry as its captain
+      description: Only the current captain may cancel a real waiting group. All ten reservations release together; proposed groups must use individual room responses. Synthetic entries are unavailable through this route.
+      parameters:
+        - { name: entry, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Search cancelled }
+        '401': { description: Authentication required }
+        '403': { description: Missing CSRF or captain authorization }
+        '404': { description: No accessible real entry }
+        '409': { description: Already reserved for a match or admission changed }
+  /me/premade-queue/rooms/{room}/response:
+    post:
+      operationId: respondPremadeQueueRoom
+      security: [{ webSession: [] }]
+      summary: Respond individually to an own premade proposal
+      description: CSRF and own-room membership required. Acceptance revalidates both groups and all player game/device/confirmed-MMR inputs. The twentieth acceptance creates and validates exactly one shared Match with twenty assignments and frozen competitive context. Adapter/roster failures roll back that acceptance and all handoff writes. Simulation rooms are inaccessible through this endpoint; the default game gateway remains unavailable.
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [accept], properties: { accept: { type: boolean } } }
+      responses:
+        '200':
+          description: Updated private queue state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeQueueStatus' }
+        '401': { description: Authentication required }
+        '403': { description: Missing CSRF }
+        '404': { description: No accessible real room }
+        '409': { description: Room is no longer proposed or the game handoff failed validation }
+  /me/premade-queue/events:
+    get:
+      operationId: streamPremadeQueue
+      security: [{ webSession: [] }]
+      summary: Subscribe to account-scoped queue invalidations
+      description: Shares the PostgreSQL queue channel with SoloQ. The client rereads its own premade snapshot on ready/changed and uses polling on disconnect. The server validates the persisted web session and active account before delivery. Event data contains no roster or MMR.
+      responses:
+        '200':
+          description: No-store ready, changed and ping events
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { description: Authentication required }
+        '429': { description: Too many streams }
+        '503': { description: Stream capacity exhausted }
+  /local/premade/setup:
+    get:
+      operationId: getPremadeLabSetup
+      security: []
+      summary: Read synthetic groups and initialize the isolated lab session
+      description: Requires local and soloq-lab profiles, a dedicated lab database and loopback binding. Shares the isolated lab cookie/CSRF contract with SoloQ. Normal profiles deny access.
+      responses:
+        '200':
+          description: No-store setup and actor list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabSetup' }
+        '401': { description: Lab unavailable in this profile }
+  /local/premade:
+    get:
+      operationId: getPremadeLabQueue
+      security: [{ soloQueueLabSession: [] }]
+      summary: Read the selected synthetic actor's premade snapshot
+      responses:
+        '200':
+          description: No-store simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '404': { description: Initialize the lab and select an actor first }
+    post:
+      operationId: enterPremadeLabQueue
+      security: [{ soloQueueLabSession: [] }]
+      summary: Queue a complete synthetic group as its captain
+      description: Lab CSRF required. No client MMR, eligibility, roster or timestamps accepted. Reuses transactional premade reservations with SIMULATION provenance only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PremadeQueueAdmission' }
+      responses:
+        '200':
+          description: No-store simulation snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Not the captain or missing lab CSRF }
+        '404': { description: Group or actor unavailable }
+        '409': { description: Stale lobby or unavailable group }
   /local/soloq:
     get:
       operationId: getSoloQueueLab
@@ -1839,6 +2118,7 @@ components:
       schema: { type: string, format: uuid }
   responses:
     PremadeGroup:
+      description: Waiting premade searches are cancelled atomically on a successful roster/captain change. Changes are rejected with 409 while a proposal/preparing room reserves the group; decline or end that room first. Visual role labels and lobby-code changes do not cancel searches.
       description: Private group snapshot; no-store. Empty body when the caller has no group or just left it. Never a queue ticket or admission.
       content:
         application/json:
@@ -1921,6 +2201,60 @@ components:
           properties:
             source: { type: string, const: FOREVER }
       description: Private real-player room. Source is FOREVER; names contain character and realm, never private Battle.net contact tags. Hidden MMR is excluded.
+    PremadeQueueAdmission:
+      type: object
+      required: [groupId, groupRevision]
+      properties:
+        groupId: { type: string, format: uuid }
+        groupRevision: { type: integer, format: int64, minimum: 0 }
+    PremadeQueueStatus:
+      allOf:
+        - { $ref: '#/components/schemas/SoloQueueStatus' }
+        - type: object
+          required: [simulation, groupId, groupRevision, captainId, canControl]
+          properties:
+            simulation: { type: boolean, const: false }
+            groupId: { type: [string, 'null'], format: uuid }
+            groupRevision: { type: [integer, 'null'], format: int64 }
+            captainId: { type: [string, 'null'], format: uuid }
+            canControl: { type: boolean }
+      description: Private premade status. Ticket ID identifies the ten-player entry for group cancellation, not an individual ticket. No hidden MMR, complete evidence or other queues' snapshots are exposed. Availability reflects server-resolved eligibility; it remains false with the default unavailable game gateway. Initial MMR is persisted as 1500 with visible rating 0, independently by season, queue and ACCOUNT/CHARACTER subject. Result movements/replay remain feature 12.
+    PremadeLabStatus:
+      type: object
+      required: [simulation, available, blockers, groupId, groupRevision, captainId, canControl, ticket, room, matchId, serverTime, revision]
+      properties:
+        simulation: { type: boolean, const: true }
+        available: { type: boolean }
+        blockers: { type: array, items: { type: string } }
+        groupId: { type: [string, 'null'], format: uuid }
+        groupRevision: { type: [integer, 'null'], format: int64 }
+        captainId: { type: [string, 'null'], format: uuid }
+        canControl: { type: boolean }
+        ticket: { $ref: '#/components/schemas/SoloQueueStatus/properties/ticket' }
+        room:
+          anyOf:
+            - { $ref: '#/components/schemas/SoloQueueLabRoom' }
+            - { type: 'null' }
+        matchId: { type: 'null' }
+        serverTime: { type: string, format: date-time }
+        revision: { type: string }
+    PremadeLabSetup:
+      type: object
+      required: [generation, accountId, players, queueDepth]
+      properties:
+        generation: { type: [string, 'null'], format: uuid }
+        accountId: { type: [string, 'null'], format: uuid }
+        queueDepth: { type: integer, minimum: 0, description: Number of waiting ten-player groups in this simulation }
+        players:
+          type: array
+          items:
+            type: object
+            required: [id, name, groupId, captain]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              groupId: { type: string, format: uuid }
+              captain: { type: boolean }
     SoloQueueStatus:
       type: object
       required: [available, blockers, ticket, room, matchId, serverTime, revision]

@@ -24,6 +24,7 @@ public class SelectionService {
     private final SeasonSelectionRepository selections;
     private final ForeverOwnershipVerifier verifier;
     private final DeviceService devices;
+    private final io.rbgs.api.matchmaking.ConfirmedRatingStore ratings;
 
     @Transactional(readOnly = true)
     public PlayContext context(Authentication authentication) {
@@ -92,7 +93,9 @@ public class SelectionService {
         if (selection == null) selection = new SeasonSelection(accountId, season.getId());
         selection.choose(character.getId(), season.getRatingSubjectType(), request.role(), request.captainConsent());
         selection.useDevice(request.companionDeviceId());
-        return view(selections.saveAndFlush(selection), season);
+        selection=selections.saveAndFlush(selection);
+        ratings.initializeSelection(selection.getId());
+        return view(selection, season);
     }
 
     private UUID accountId(Authentication authentication) {

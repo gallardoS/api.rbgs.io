@@ -35,6 +35,7 @@ public class GroupService {
     private final DeviceRepository devices;
     private final MatchAssignmentRepository assignments;
     private final io.rbgs.api.matchmaking.QueueTicketRepository queueTickets;
+    private final io.rbgs.api.matchmaking.PremadeLobbyReservations queueReservations;
     private final GroupJoinLimiter joinLimiter;
     private final PlatformTransactionManager transactionManager;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -94,6 +95,7 @@ public class GroupService {
     }
 
     private Group joinMember(UUID actor, String code) {
+        queueTickets.lockCoordinator();
         String hash = hash(code.strip());
         var id = groups.findIdByJoinCodeHash(hash).orElseThrow(GroupService::codeUnavailable);
         UUID sourceId = members.findGroupIdByAccountId(actor).orElse(null);
@@ -117,6 +119,9 @@ public class GroupService {
         if (!Objects.equals(existing == null ? null : existing.getGroupId(), sourceId)) throw new MembershipChanged();
         if (id.equals(sourceId)) return view(group, actor);
         requireRegion(group, actor);
+        // A successful lobby switch cancels waiting premades atomically; later failures roll this back.
+        if (sourceId != null) queueReservations.beforeLockedLobbyChange(sourceId);
+        queueReservations.beforeLockedLobbyChange(id);
         requireMatchAvailable(actor);
         if (members.countByGroupId(id) >= 10) throw conflict("This group already has ten players");
         if (existing == null) members.saveAndFlush(new GroupMember(actor, id));
@@ -171,6 +176,7 @@ public class GroupService {
     @Transactional
     public Group accept(Authentication auth, UUID invitationId) {
         UUID actor = actor(auth);
+        queueTickets.lockCoordinator();
         var initial = invitations.findById(invitationId).filter(i -> i.getAccountId().equals(actor)).orElseThrow(GroupService::notFound);
         // Lock the group before the joining account, consistent with code-based group switches.
         var group = groups.lockById(initial.getGroupId()).orElseThrow(GroupService::notFound);
@@ -180,6 +186,7 @@ public class GroupService {
         requireRegion(group, actor);
         requireAvailable(actor);
         if (members.countByGroupId(group.getId()) >= 10) throw conflict("This group already has ten players");
+        queueReservations.beforeLockedLobbyChange(group.getId());
         members.saveAndFlush(new GroupMember(actor, group.getId()));
         invitations.deleteByAccountId(actor);
         group.rosterChanged();
@@ -209,10 +216,12 @@ public class GroupService {
     @Transactional
     public Group transfer(Authentication auth, UUID id, long revision, UUID target) {
         UUID actor = actor(auth);
+        queueTickets.lockCoordinator();
         var group = lockedMember(id, actor, revision);
         requireCaptain(group, actor);
         if (target.equals(actor)) throw conflict("Choose another member as captain");
         members.findById(target).filter(m -> m.getGroupId().equals(id)).orElseThrow(GroupService::notFound);
+        queueReservations.beforeLockedLobbyChange(id);
         group.transfer(target);
         return view(group, actor);
     }
@@ -220,9 +229,11 @@ public class GroupService {
     @Transactional
     public Group remove(Authentication auth, UUID id, long revision, UUID target) {
         UUID actor = actor(auth);
+        queueTickets.lockCoordinator();
         var group = lockedMember(id, actor, revision);
         if (!actor.equals(target)) requireCaptain(group, actor);
         var member = members.findById(target).filter(m -> m.getGroupId().equals(id)).orElseThrow(GroupService::notFound);
+        queueReservations.beforeLockedLobbyChange(id);
         if (group.getCaptainId().equals(target)) {
             var successor = members.findFirstByGroupIdAndAccountIdNotOrderByJoinedOrderAsc(id, target);
             if (successor.isEmpty()) {

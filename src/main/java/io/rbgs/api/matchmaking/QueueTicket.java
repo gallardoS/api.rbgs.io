@@ -27,6 +27,7 @@ public class QueueTicket {
     @Column(name="selection_version",updatable=false) private Long selectionVersion;
     @Column(name="companion_device_id",updatable=false) private UUID companionDeviceId;
     @Column(name="cancellation_reason",length=64) private String cancellationReason;
+    @Column(name="premade_entry_id",updatable=false) private UUID premadeEntryId;
     @Version private long version;
 
     QueueTicket(SoloQueueCandidate candidate) {
@@ -40,11 +41,20 @@ public class QueueTicket {
         // Older tickets already have a persisted random ID, so recovery must never reroll their tie-break.
         return candidate.captainLottery()==null?candidate.withCaptainLottery(id):candidate;
     }
+    QueueTicket(SoloQueueCandidate candidate, UUID entryId) {
+        this(candidate);
+        queueType="PREMADE";
+        premadeEntryId=java.util.Objects.requireNonNull(entryId);
+    }
     void cancel() { if (!state.equals("QUEUED")) throw new IllegalStateException("Ticket is already reserved for a match"); state = "CANCELLED"; }
     void realAdmission(SoloQueueEligibility.Result eligibility) {
-        source="FOREVER";seasonVersion=eligibility.seasonVersion();selectionVersion=eligibility.selectionVersion();companionDeviceId=eligibility.deviceId();
+        realAdmission(eligibility.seasonVersion(),eligibility.selectionVersion(),eligibility.deviceId());
     }
-    void invalidate() { cancel();cancellationReason="ELIGIBILITY_CHANGED"; }
+    void realAdmission(Long season,Long selection,UUID device) {
+        source="FOREVER";seasonVersion=java.util.Objects.requireNonNull(season);selectionVersion=java.util.Objects.requireNonNull(selection);companionDeviceId=java.util.Objects.requireNonNull(device);
+    }
+    void invalidate() { invalidate("ELIGIBILITY_CHANGED"); }
+    void invalidate(String reason) { cancel();cancellationReason=java.util.Objects.requireNonNull(reason); }
     void propose(UUID id) {
         if (!state.equals("QUEUED")) throw new IllegalStateException("Ticket is no longer waiting");
         proposalId = id; state = "PROPOSED";

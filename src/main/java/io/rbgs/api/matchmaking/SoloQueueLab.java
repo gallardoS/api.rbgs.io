@@ -81,7 +81,7 @@ public class SoloQueueLab {
         var recent=ticket!=null && ticket.getProposalId()!=null?ticket:
                 tickets.recentRooms(selected,PageRequest.of(0,1)).stream().findFirst().orElse(null);
         var room=recent==null?null:rooms.own(selected,recent.getProposalId());
-        long depth=tickets.countByState("QUEUED");
+        long depth=tickets.countBySourceAndQueueTypeAndState("SIMULATION","SOLO","QUEUED");
         String revision=state.getGeneration()+":"+selected+":"+players.hashCode()+":"+depth+":"+(ticket==null?"none":ticket.getId()+":"+ticket.getVersion())
                 +":"+(room==null?"none":room.id()+":"+room.version());
         return new Snapshot(true,state.getGeneration(),state.getScenario(),Instant.now(),selected,players,depth,

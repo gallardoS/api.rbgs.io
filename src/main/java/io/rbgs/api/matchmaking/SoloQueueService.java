@@ -30,7 +30,7 @@ public class SoloQueueService {
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Status status(UUID account) {
         Instant now=Instant.now();var current=eligibility.inspect(account,now);
-        var latest=tickets.findByAccountIdAndSourceOrderByEnteredAtDescIdDesc(account,"FOREVER",PageRequest.of(0,1)).stream().findFirst().orElse(null);
+        var latest=tickets.findByAccountIdAndSourceAndQueueTypeOrderByEnteredAtDescIdDesc(account,"FOREVER","SOLO",PageRequest.of(0,1)).stream().findFirst().orElse(null);
         var room=latest==null||latest.getProposalId()==null?null:rooms.own(account,latest.getProposalId());
         UUID match=room==null?null:roomRows.findById(room.id()).orElseThrow().getMatchId();
         var view=latest==null?null:new Ticket(latest.getId(),latest.getState(),latest.getEnteredAt(),latest.getProposalId(),latest.getVersion(),latest.getCancellationReason());

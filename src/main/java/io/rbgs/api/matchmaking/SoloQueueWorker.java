@@ -4,8 +4,10 @@ import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 @Component @RequiredArgsConstructor
+@ConditionalOnProperty(name="rbgs.soloq.worker",havingValue="true",matchIfMissing=true)
 class SoloQueueWorker {
     private final SoloQueueStore store;
     private final SoloQueueRooms rooms;
