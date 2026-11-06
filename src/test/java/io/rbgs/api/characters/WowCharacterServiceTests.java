@@ -746,6 +746,24 @@ class WowCharacterServiceTests {
         }
     }
 
+    @Test
+    void foreverTestQueriesOnlyForeverAndKeepsLowLevelFullNames() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).build();
+        var service = service(builder);
+        server.expect(ExpectedCount.manyTimes(), anything()).andRespond(request -> {
+            assertTrue(request.getURI().getQuery().contains("profile-forever-"));
+            if (!request.getURI().getPath().equals("/profile/user/wow")) return withResourceNotFound().createResponse(request);
+            String region = request.getURI().getHost().startsWith("us.") ? "us" : "eu";
+            return withSuccess(foreverProfile(region), MediaType.APPLICATION_JSON).createResponse(request);
+        });
+        var result = service.currentForeverTestCharacters(client(Set.of("wow.profile"), Instant.now().plusSeconds(60)));
+        assertEquals(2, result.wowAccounts().size());
+        assertTrue(result.wowAccounts().stream().allMatch(a -> a.characters().getFirst().level() == 1));
+        assertTrue(result.wowAccounts().stream().allMatch(a -> a.characters().getFirst().name().equals("Sw Sw")));
+        server.verify();
+    }
+
     private String foreverProfile(String region) {
         return """
                 {"wow_accounts":[{"id":7,"characters":[{"id":42,"name":"Sw","surname":"Sw","level":1,

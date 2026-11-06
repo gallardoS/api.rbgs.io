@@ -66,6 +66,18 @@ public class ControlledMatchService {
                 "expectedMapProfile", CaptureProfile.TBC_ANNIVERSARY_WSG_TEST.name()), selected);
     }
 
+    @Transactional
+    public Map<String,Object> createForever(Authentication auth, long armMinutes, SelectedTestCharacter selected) {
+        UUID actor = testActor(auth);
+        var row = new LinkedHashMap<String,Object>();
+        row.put("accountId", actor.toString()); row.put("teamKey", null);
+        var identity = new LinkedHashMap<String,Object>();
+        identity.put("name", selected.name()); identity.put("realm", selected.realm());
+        row.put("character", identity);
+        return create(auth, Map.of("armMinutes", armMinutes, "roster", List.of(row), "testKind", "CAPTURE_ONLY",
+                "expectedMapProfile", CaptureProfile.FOREVER_WSG_TEST.name()), selected);
+    }
+
     private Map<String,Object> create(Authentication auth,Map<String,Object> request,SelectedTestCharacter selected) {
         enabled();
         UUID actor = testActor(auth);
@@ -79,9 +91,9 @@ public class ControlledMatchService {
                 ? CaptureProfile.find(text(request.get("expectedMapProfile"))).orElseThrow(CaptureJson::invalid)
                 : CaptureProfile.DARKSPEAR_DIAGNOSTIC;
         // Temporary substitute-client observations cannot establish verified outcomes.
-        if (profile == CaptureProfile.TBC_ANNIVERSARY_WSG_TEST && !captureOnly) throw invalid();
-        if (profile == CaptureProfile.TBC_ANNIVERSARY_WSG_TEST && selected == null)
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT, "Select an owned Anniversary character before creating this test");
+        if ((profile == CaptureProfile.TBC_ANNIVERSARY_WSG_TEST || profile == CaptureProfile.FOREVER_WSG_TEST) && !captureOnly) throw invalid();
+        if ((profile == CaptureProfile.TBC_ANNIVERSARY_WSG_TEST || profile == CaptureProfile.FOREVER_WSG_TEST) && selected == null)
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT, "Select an owned character from the selected client before creating this test");
         long minutes = number(request.get("armMinutes"));
         if (minutes < 5 || minutes > 120) throw invalid();
         List<?> requestedRows = rows(request.get("roster"), captureOnly ? 1 : 2, captureOnly ? 1 : 40);

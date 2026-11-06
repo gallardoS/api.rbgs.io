@@ -60,8 +60,8 @@ public class CaptureService {
     public Map<String,Object> issue(UUID account,UUID capture,boolean captureOnlySupported,String testProfile) {
         var assignment = owned(account, capture, true);
         var match = assignment.getMatch();
-        if (CaptureProfile.TBC_ANNIVERSARY_WSG_TEST.name().equals(match.getProfile())
-                && !match.getProfile().equals(testProfile))
+        if (Set.of(CaptureProfile.TBC_ANNIVERSARY_WSG_TEST.name(), CaptureProfile.FOREVER_WSG_TEST.name()).contains(match.getProfile())
+                && (testProfile == null || !Arrays.stream(testProfile.split(",")).map(String::trim).toList().contains(match.getProfile())))
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Update the companion before getting a WSG test command");
         if (match.getEvidencePolicy() == MatchEvidencePolicy.CAPTURE_ONLY && !captureOnlySupported) throw new ResponseStatusException(HttpStatus.CONFLICT, "Update the companion before getting a command for this match");
         if (assignment.getCodeHash() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "The match command was already created. If you no longer have it, request a new match.");

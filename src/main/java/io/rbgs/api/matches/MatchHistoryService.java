@@ -84,7 +84,7 @@ public class MatchHistoryService {
         }
         String map = switch (match.getProfile()) {
             case "DARKSPEAR_DIAGNOSTIC" -> "Darkspear Islands";
-            case "TBC_ANNIVERSARY_WSG_TEST" -> "Warsong Gulch";
+            case "FOREVER_WSG_TEST", "TBC_ANNIVERSARY_WSG_TEST" -> "Warsong Gulch";
             default -> null;
         };
         return new Item(match.getId(), match.getCreatedAt(), match.getMode().name(), match.getEvidencePolicy().name(), map,

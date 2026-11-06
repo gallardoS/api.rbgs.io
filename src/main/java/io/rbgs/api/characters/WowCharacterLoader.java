@@ -81,6 +81,11 @@ public class WowCharacterLoader {
         return loadCharacters(token, deadline, List.of("profile-classicann-eu", "profile-classicann-us"), 1);
     }
 
+    @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'FOREVER_WSG_TEST'}", sync = true)
+    public WowAccountProfile loadForeverTestCharacters(WowCharacterService.CacheKey key, String token, long deadline) {
+        return loadCharacters(token, deadline, List.of("profile-forever-eu", "profile-forever-us"), 1);
+    }
+
     @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'PROFILE_REGIONS'}", sync = true)
     public List<String> loadRegions(WowCharacterService.CacheKey key, String token, long deadline) {
         var namespaces = new ArrayList<>(NAMESPACES);

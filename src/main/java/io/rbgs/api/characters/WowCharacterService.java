@@ -38,6 +38,12 @@ public class WowCharacterService {
         return currentCharacters(authorizedClient, true);
     }
 
+    public WowAccountProfile currentForeverTestCharacters(OAuth2AuthorizedClient authorizedClient) {
+        CacheKey key = authorizedKey(authorizedClient);
+        return loader.loadForeverTestCharacters(key, authorizedClient.getAccessToken().getTokenValue(),
+                System.nanoTime() + loadTimeout.toNanos());
+    }
+
     private WowAccountProfile currentCharacters(OAuth2AuthorizedClient authorizedClient, boolean anniversaryTest) {
         CacheKey key = authorizedKey(authorizedClient);
         var token = authorizedClient.getAccessToken();
