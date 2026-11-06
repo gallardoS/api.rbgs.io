@@ -2,6 +2,7 @@ package io.rbgs.api.characters;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -27,6 +28,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class WowCharacterLoader {
+    private static final List<String> FOREVER_NAMESPACES = List.of("profile-forever-eu", "profile-forever-us");
     private static final List<String> NAMESPACES = List.of(
             "profile-classic1x-eu", "profile-classic-eu", "profile-classic1x-us", "profile-classic-us",
             "profile-classicann-eu", "profile-classicann-us", "profile-forever-eu", "profile-forever-us");
@@ -73,7 +75,7 @@ public class WowCharacterLoader {
 
     @Cacheable(cacheNames = "wowCharacters", key = "#key", sync = true)
     public WowAccountProfile loadCharacters(WowCharacterService.CacheKey key, String token, long deadline) {
-        return loadCharacters(token, deadline, NAMESPACES, 60);
+        return loadCharacters(token, deadline, FOREVER_NAMESPACES, 1);
     }
 
     @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'TBC_ANNIVERSARY_TEST'}", sync = true)
@@ -83,7 +85,7 @@ public class WowCharacterLoader {
 
     @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'FOREVER_WSG_TEST'}", sync = true)
     public WowAccountProfile loadForeverTestCharacters(WowCharacterService.CacheKey key, String token, long deadline) {
-        return loadCharacters(token, deadline, List.of("profile-forever-eu", "profile-forever-us"), 1);
+        return loadCharacters(token, deadline, FOREVER_NAMESPACES, 1);
     }
 
     @Cacheable(cacheNames = "wowCharacters", key = "{#key, 'PROFILE_REGIONS'}", sync = true)
@@ -133,8 +135,12 @@ public class WowCharacterLoader {
                 }
             }
             if (!foundProfile && includeDetails) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW Classic or Forever profile in EU or North America");
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No accessible WoW profile in the requested branches and regions");
             }
+            accounts.values().forEach(characters -> characters.sort(
+                    Comparator.comparingInt(WowAccountProfile.WowCharacter::level).reversed()
+                            .thenComparing(WowAccountProfile.WowCharacter::name, String.CASE_INSENSITIVE_ORDER)
+                            .thenComparingLong(WowAccountProfile.WowCharacter::id)));
             if (!includeDetails) return new WowAccountProfile(accounts.entrySet().stream().map(account ->
                     new WowAccountProfile.WowAccount(account.getKey().id(), List.copyOf(account.getValue()))).toList());
             var details = new LinkedHashMap<WowAccountProfile.WowCharacter, Future<WowAccountProfile.WowCharacter>>();
@@ -227,7 +233,8 @@ public class WowCharacterLoader {
     private WowAccountProfile.WowCharacter basicCharacter(WowAccountProfile.WowCharacter character, String namespace) {
         return new WowAccountProfile.WowCharacter(character.id(), character.name(), character.realm(),
                 character.playableClass(), character.playableRace(), character.faction(), character.level(),
-                character.avatarUrl(), character.insetUrl(), namespace, character.guild(), character.gender());
+                character.avatarUrl(), character.insetUrl(), namespace, character.guild(), character.gender(),
+                character.avatarSdUrl(), character.avatarHdUrl());
     }
 
     private static String region(String namespace) {
@@ -241,6 +248,7 @@ public class WowCharacterLoader {
     private WowAccountProfile.WowCharacter withDetails(WowAccountProfile.WowCharacter character, String token, String namespace, long deadline) {
         if (System.nanoTime() >= deadline || Thread.currentThread().isInterrupted()) return character;
         String avatar = null;
+        String avatarSd = null;
         String inset = null;
         String path = isForever(namespace) ? "/profile/wow/character/{name}" : "/profile/wow/character/{realm}/{name}";
         Object[] identity = isForever(namespace)
@@ -255,6 +263,8 @@ public class WowCharacterLoader {
                     .headers(headers -> headers.setBearerAuth(token)).retrieve().body(CharacterMedia.class);
             if (media != null && media.assets() != null) {
                 avatar = media.assets().stream().filter(asset -> "avatar".equals(asset.key()))
+                        .map(CharacterMedia.Asset::value).filter(this::isBlizzardImage).findFirst().orElse(null);
+                if (isForever(namespace)) avatarSd = media.assets().stream().filter(asset -> "avatar-sd".equals(asset.key()))
                         .map(CharacterMedia.Asset::value).filter(this::isBlizzardImage).findFirst().orElse(null);
                 inset = media.assets().stream().filter(asset -> "inset".equals(asset.key()))
                         .map(CharacterMedia.Asset::value).filter(this::isBlizzardImage).findFirst().orElse(null);
@@ -279,7 +289,8 @@ public class WowCharacterLoader {
             // Guild and gender are optional; unavailable profiles must not hide owned characters.
         }
         return new WowAccountProfile.WowCharacter(character.id(), character.name(), character.realm(),
-                character.playableClass(), character.playableRace(), character.faction(), character.level(), avatar, inset, namespace, guild, gender);
+                character.playableClass(), character.playableRace(), character.faction(), character.level(),
+                avatarSd != null ? avatarSd : avatar, inset, namespace, guild, gender, avatarSd, avatar);
     }
 
     private boolean isBlizzardImage(String value) {

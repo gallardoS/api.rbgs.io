@@ -591,7 +591,7 @@ paths:
       operationId: selectOwnPlayCharacter
       security: [{ webSession: [] }]
       summary: Select an owned Play character and derive its EU/NA region
-      description: Requires CSRF and the current user's Battle.net wow.profile authorization. Accepts Forever at level 1+ and Classic/Anniversary at level 60+. Resolves exactly one complete provider reference from the bounded authenticated character list before starting a database transaction. Names, realms and EU/NA region are server-derived; callers cannot supply a lobby region. Serializes with lobby admission under the account lock. A grouped player may change characters only within the fixed lobby region; leave first to change regions. Identical selections avoid writes and events. Changes notify lobby peers through SSE. Requires neither a season nor a desktop device; competitive selections remain separate.
+      description: Requires CSRF and the current user's Battle.net wow.profile authorization. Accepts only Forever at level 1+. Resolves exactly one complete provider reference from the bounded authenticated character list before starting a database transaction. Names, realms and EU/NA region are server-derived; callers cannot supply a lobby region. Serializes with lobby admission under the account lock. A grouped player may change characters only within the fixed lobby region; leave first to change regions. Identical selections avoid writes and events. Changes notify lobby peers through SSE. Requires neither a season nor a desktop device; competitive selections remain separate.
       requestBody:
         required: true
         content:
@@ -607,7 +607,7 @@ paths:
         '401': { description: Sign in or renew Battle.net authorization }
         '403': { description: Account, CSRF or wow.profile permission unavailable }
         '409': { description: Character belongs to another lobby region; existing selection is retained }
-        '422': { description: Reference does not resolve to exactly one owned Forever level-1+ or Classic/Anniversary level-60+ character }
+        '422': { description: Reference does not resolve to exactly one owned Forever level-1+ character }
         '502': { description: Blizzard unavailable }
         '504': { description: Character lookup timed out }
   /me/group-events:
@@ -2057,8 +2057,8 @@ paths:
   /characters/me:
     get:
       operationId: getCurrentUserCharacters
-      summary: Get the authenticated user's Forever and Classic characters in EU and North America
-      description: Requires a Battle.net session with wow.profile permission. Queries Classic Era, progression, Anniversary and Forever in both EU (eu.api.blizzard.com, en_GB) and NA (us.api.blizzard.com, en_US) with the user token. Forever uses profile-forever-eu and profile-forever-us and includes level 1 and above; Classic and Anniversary remain level 60 and above. Forever name is normalized to first name plus surname, and realm.id comes from the authenticated protected-character reference; realm.name is Forever and realm.slug is empty because the provider returns neither a realm object nor a ruleset. Optional profile/media requests use the Forever regional name route without a realm segment; unavailable details preserve the owned list. Merges branches within each regional WoW account. Account IDs may coincide across regions; identity includes namespace, WoW account, realm and character IDs. A missing profile (404) does not hide the other branches or region; other provider failures do not return a partial list. Never returns tokens.
+      summary: Get the authenticated user's WoW Forever characters in EU and North America
+      description: Requires a Battle.net session with wow.profile permission. Queries only Forever in both EU (eu.api.blizzard.com, en_GB) and NA (us.api.blizzard.com, en_US) with the user token. Uses profile-forever-eu and profile-forever-us and includes level 1 and above. Characters within each regional account are ordered by descending level, then name and ID. Classic and retail are never queried for this list. Forever name is normalized to first name plus surname, and realm.id comes from the authenticated protected-character reference; realm.name is Forever and realm.slug is empty because the provider returns neither a realm object nor a ruleset. Optional profile/media requests use the Forever regional name route without a realm segment; unavailable details preserve the owned list. Preserves each regional WoW account. Account IDs may coincide across regions; identity includes namespace, WoW account, realm and character IDs. A missing profile (404) does not hide the other branches or region; other provider failures do not return a partial list. Never returns tokens.
       responses:
         '200':
           description: WoW accounts and their owned characters
@@ -2071,7 +2071,7 @@ paths:
         '403':
           description: Suspended or missing rbgs.io account, missing wow.profile permission or Blizzard profile privacy restriction
         '404':
-          description: None of the Classic or Forever branches in EU or North America has an accessible profile
+          description: Neither Forever region (EU or North America) has an accessible profile
         '502':
           description: Blizzard unavailable or returned an invalid response
   /auth/me:
@@ -2760,11 +2760,19 @@ components:
         namespace:
           type: string
           enum: [profile-classic1x-eu, profile-classic-eu, profile-classic1x-us, profile-classic-us, profile-classicann-eu, profile-classicann-us, profile-forever-eu, profile-forever-us]
-          description: Source branch and region, part of identity alongside account/realm/character IDs. Play includes Forever at level 1+ and Classic/Anniversary at level 60+. A display preference does not establish competitive eligibility. The web displays us as NA.
+          description: Source branch and region, part of identity alongside account/realm/character IDs. Play includes only Forever at level 1+. A display preference does not establish competitive eligibility. The web displays us as NA.
         avatarUrl:
           type: [string, 'null']
           format: uri
-          description: Optional Blizzard portrait; null when character media is unavailable.
+          description: Optional default Blizzard portrait; prefers SD for Forever, falling back to HD. Null when character media is unavailable.
+        avatarSdUrl:
+          type: [string, 'null']
+          format: uri
+          description: Optional SD portrait returned by Forever character media.
+        avatarHdUrl:
+          type: [string, 'null']
+          format: uri
+          description: Optional original HD portrait, for viewers who prefer HD.
         insetUrl:
           type: [string, 'null']
           format: uri
@@ -2777,7 +2785,7 @@ components:
         level:
           type: integer
           minimum: 1
-          description: Forever includes level 1 and above. Ordinary Classic/Anniversary preview remains level 60 and above; the separate moderator Anniversary test picker retains its existing level-1 minimum. No battleground eligibility is asserted.
+          description: Forever includes level 1 and above. The separate moderator Anniversary test picker retains its existing level-1 minimum. No battleground eligibility is asserted.
         realm:
           type: object
           properties:
