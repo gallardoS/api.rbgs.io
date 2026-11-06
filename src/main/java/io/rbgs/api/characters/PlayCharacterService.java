@@ -30,6 +30,7 @@ public class PlayCharacterService {
     private final PremadeGroupRepository groups;
     private final JdbcTemplate db;
     private final PlatformTransactionManager transactions;
+    private final AvatarPreferenceService avatarPreferences;
 
     public record Reference(@NotBlank @Pattern(regexp = "profile-(classic(1x|ann)?|forever)-(eu|us)") String namespace,
             @Positive long wowAccountId, @Positive long realmId, @Positive long characterId) { }
@@ -39,10 +40,10 @@ public class PlayCharacterService {
     public Selected current(Authentication auth) { return find(actor(auth)); }
 
     public Selected find(UUID account) {
-        return db.query("SELECT * FROM rbgs.play_characters WHERE account_id=?", (row, index) -> new Selected(
+        return db.query("SELECT p.*, a.avatar_style FROM rbgs.play_characters p JOIN rbgs.accounts a ON a.id=p.account_id WHERE p.account_id=?", (row, index) -> new Selected(
                 row.getString("namespace"), row.getLong("wow_account_id"), row.getLong("realm_id"),
                 row.getLong("character_id"), row.getString("region"), row.getString("name"), row.getString("realm"),
-                row.getString("character_profile") == null ? null : json.readValue(row.getString("character_profile"), WowCharacter.class)),
+                row.getString("character_profile") == null ? null : portrait(json.readValue(row.getString("character_profile"), WowCharacter.class), row.getString("avatar_style"))),
                 account).stream().findFirst().orElse(null);
     }
 
@@ -67,15 +68,24 @@ public class PlayCharacterService {
             var membership = members.findById(actor).orElse(null);
             if (membership != null && !region.equals(groups.findById(membership.getGroupId()).orElseThrow().getRegion()))
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Choose a character from your lobby's region");
-            if (!selected.equals(find(actor))) db.update("""
+            var resolved = new Selected(selected.namespace(), selected.wowAccountId(), selected.realmId(), selected.characterId(),
+                    selected.region(), selected.name(), selected.realm(), portrait(character, avatarPreferences.find(actor).style()));
+            if (!resolved.equals(find(actor))) db.update("""
                     INSERT INTO rbgs.play_characters(account_id,namespace,wow_account_id,realm_id,character_id,region,name,realm,character_profile)
                     VALUES (?,?,?,?,?,?,?,?,?::jsonb) ON CONFLICT (account_id) DO UPDATE SET
                     namespace=EXCLUDED.namespace, wow_account_id=EXCLUDED.wow_account_id, realm_id=EXCLUDED.realm_id,
                     character_id=EXCLUDED.character_id, region=EXCLUDED.region, name=EXCLUDED.name, realm=EXCLUDED.realm, character_profile=EXCLUDED.character_profile
                     """, actor, selected.namespace(), selected.wowAccountId(), selected.realmId(), selected.characterId(),
-                    region, selected.name(), selected.realm(), json.writeValueAsString(character));
-            return selected;
+                    region, selected.name(), selected.realm(), json.writeValueAsString(resolved.character()));
+            return resolved;
         });
+    }
+
+    private WowCharacter portrait(WowCharacter character, String style) {
+        String preferred = "hd".equals(style) ? character.avatarHdUrl() : character.avatarSdUrl();
+        return new WowCharacter(character.id(), character.name(), character.realm(), character.playableClass(),
+                character.playableRace(), character.faction(), character.level(), preferred == null ? character.avatarUrl() : preferred,
+                character.insetUrl(), character.namespace(), character.guild(), character.gender(), character.avatarSdUrl(), character.avatarHdUrl());
     }
 
     private UUID actor(Authentication auth) {

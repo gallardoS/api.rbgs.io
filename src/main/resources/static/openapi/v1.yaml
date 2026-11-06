@@ -573,6 +573,44 @@ paths:
         '403': { description: Account or CSRF unavailable }
         '404': { description: Ticket unavailable to this account }
         '409': { description: Ticket already reserved for a proposal }
+  /me/avatar-preference:
+    get:
+      operationId: getOwnAvatarPreference
+      security: [{ webSession: [] }]
+      summary: Read the account's preferred character portrait style
+      description: Private no-store account preference. Defaults to sd; configured is false until explicitly saved. Initializes CSRF. Does not require a Battle.net provider request.
+      responses:
+        '200':
+          description: Preferred style and whether it has been saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [style, configured]
+                properties:
+                  style: { type: string, enum: [sd, hd] }
+                  configured: { type: boolean }
+        '401': { description: Sign in required }
+        '403': { description: Active account required }
+    put:
+      operationId: setOwnAvatarPreference
+      security: [{ webSession: [] }]
+      summary: Save how this account's character appears to other lobby members
+      description: Requires CSRF. Persists independently of the selected character. Lobby snapshots resolve avatarUrl using the owner's preference, with a fallback when a variant is unavailable. Changes notify lobby peers through SSE; identical saves do not notify or write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [style]
+              properties:
+                style: { type: string, enum: [sd, hd] }
+      responses:
+        '200': { description: Saved style and configured true; no-store }
+        '400': { description: Invalid style }
+        '401': { description: Sign in required }
+        '403': { description: Account or CSRF unavailable }
   /me/play-character:
     get:
       operationId: getOwnPlayCharacter

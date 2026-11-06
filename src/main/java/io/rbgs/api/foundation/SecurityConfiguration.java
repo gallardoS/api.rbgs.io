@@ -70,6 +70,7 @@ public class SecurityConfiguration {
             authorize.requestMatchers(HttpMethod.POST, EmailFeedbackController.PATH, ResendFeedbackController.PATH).permitAll()
                 .requestMatchers("/api/v1/health", "/api/v1/readiness", "/openapi/v1.yaml", "/actuator/health", "/actuator/prometheus").permitAll()
                 .requestMatchers("/api/v1/auth/me").access(new AccountAuthorizationManager(accountServices, null, true))
+                .requestMatchers("/api/v1/me/avatar-preference").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/me/solo-queue", "/api/v1/me/solo-queue/**").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers("/api/v1/me/premade-queue", "/api/v1/me/premade-queue/**").access(new AccountAuthorizationManager(accountServices, null, false))
                 .requestMatchers(HttpMethod.GET, "/api/v1/matches/*/result", "/api/v1/capture-tests/*/result").access(new AccountAuthorizationManager(accountServices, null, false))

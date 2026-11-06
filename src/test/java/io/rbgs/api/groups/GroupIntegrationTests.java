@@ -31,6 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class GroupIntegrationTests {
     @Autowired GroupService service;
     @Autowired io.rbgs.api.characters.PlayCharacterService playCharacters;
+    @Autowired io.rbgs.api.characters.AvatarPreferenceService avatarPreferences;
     @MockitoBean io.rbgs.api.characters.WowCharacterService provider;
     @Autowired GroupEventStreams streams;
     @Autowired org.springframework.session.SessionRepository sessions;
@@ -364,6 +365,42 @@ class GroupIntegrationTests {
     private io.rbgs.api.characters.PlayCharacterService.Reference profileReference() {
         return new io.rbgs.api.characters.PlayCharacterService.Reference("profile-classicann-eu",7,1,70);
     }
+    @Test void avatarPreferenceIsPersistedAndSharedWithPeersIndependentlyOfViewerPreference() throws Exception {
+        String sd = "https://render.worldofwarcraft.com/forever-eu/avatar-sd.jpg";
+        String hd = "https://render.worldofwarcraft.com/forever-eu/avatar.jpg";
+        var base = profileCatalog("Owned Druid",70,sd).wowAccounts().getFirst().characters().getFirst();
+        var character = new io.rbgs.api.characters.dto.WowAccountProfile.WowCharacter(base.id(),base.name(),base.realm(),
+                base.playableClass(),base.playableRace(),base.faction(),base.level(),sd,null,base.namespace(),base.guild(),base.gender(),sd,hd);
+        when(provider.currentCharacters(any())).thenReturn(new io.rbgs.api.characters.dto.WowAccountProfile(List.of(
+                new io.rbgs.api.characters.dto.WowAccountProfile.WowAccount(7,List.of(character)))));
+        playCharacters.save(auth(0),null,profileReference());
+        join(service.create(auth(0)),0,1);
+        var peer = stream(1); int count = changes(peer);
+        mvc.perform(get("/api/v1/me/avatar-preference")).andExpect(status().isUnauthorized());
+        db.update("DELETE FROM rbgs.play_characters WHERE account_id=?", players.get(2).id());
+        avatarPreferences.save(auth(2),new io.rbgs.api.characters.AvatarPreferenceService.Request("hd"));
+        assertEquals("hd",avatarPreferences.current(auth(2)).style());
+        assertNull(playCharacters.current(auth(2)));
+        mvc.perform(get("/api/v1/me/avatar-preference").with(login(0))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.style").value("sd")).andExpect(jsonPath("$.configured").value(false));
+        mvc.perform(put("/api/v1/me/avatar-preference").with(login(0)).contentType("application/json").content("{\"style\":\"hd\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/me/avatar-preference").with(login(0)).with(csrf()).contentType("application/json").content("{\"style\":\"invalid\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/v1/me/avatar-preference").with(login(0)).with(csrf()).contentType("application/json").content("{\"style\":\"hd\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.style").value("hd")).andExpect(jsonPath("$.configured").value(true));
+        await(() -> changes(peer) > count);
+        assertEquals("sd",avatarPreferences.current(auth(1)).style());
+        assertEquals(hd,service.own(auth(1)).members().stream().filter(GroupService.Member::captain).findFirst().orElseThrow().character().avatarUrl());
+        assertEquals(hd,playCharacters.current(auth(0)).character().avatarUrl());
+        assertEquals(hd,playCharacters.save(auth(0),null,profileReference()).character().avatarUrl());
+        String before = db.queryForObject("SELECT xmin::text FROM rbgs.accounts WHERE id=?",String.class,players.get(0).id());
+        avatarPreferences.save(auth(0),new io.rbgs.api.characters.AvatarPreferenceService.Request("hd"));
+        assertEquals(before,db.queryForObject("SELECT xmin::text FROM rbgs.accounts WHERE id=?",String.class,players.get(0).id()));
+        avatarPreferences.save(auth(0),new io.rbgs.api.characters.AvatarPreferenceService.Request("sd"));
+        assertEquals(sd,service.own(auth(1)).members().stream().filter(GroupService.Member::captain).findFirst().orElseThrow().character().avatarUrl());
+    }
+
     @Test void selectedProfileIsSharedOnlyWithLobbyMembersWithoutProviderFanout() throws Exception {
         when(provider.currentCharacters(any())).thenReturn(profileCatalog("Owned Druid",70,
             "https://render.worldofwarcraft.com/classicann-eu/character/eu-realm/1/70-avatar.jpg"));
