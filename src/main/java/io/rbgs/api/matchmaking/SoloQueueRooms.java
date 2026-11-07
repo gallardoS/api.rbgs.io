@@ -54,7 +54,7 @@ public class SoloQueueRooms {
         var ticket=roster.stream().filter(t->t.getAccountId().equals(account)).findFirst().orElseThrow();
         var room=rooms.findById(id).orElseThrow();
         if (room.due(now)) { cancel(room,roster,"DEADLINE_EXPIRED"); return; }
-        if (room.getStatus().equals("CANCELLED")) return;
+        if (!Set.of("PROPOSED","PREPARING").contains(room.getStatus())) return;
         if (!accept) { cancel(room,roster,"PARTICIPANT_DECLINED"); return; }
         if (!room.getStatus().equals("PROPOSED") || ticket.getAcceptedAt()!=null) return;
         if (!accounts.findForSelection(account).orElseThrow().getStatus().equals("ACTIVE")) {

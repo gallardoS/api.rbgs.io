@@ -13,6 +13,7 @@ public interface QueueTicketRepository extends JpaRepository<QueueTicket, UUID> 
     @Query("select t from QueueTicket t where t.accountId=:account and t.state in ('QUEUED','PROPOSED')")
     Optional<QueueTicket> active(UUID account);
     List<QueueTicket> findByProposalIdOrderByAccountId(UUID proposal);
+    Optional<QueueTicket> findByAccountIdAndProposalId(UUID account,UUID proposal);
     List<QueueTicket> findByPremadeEntryIdOrderByAccountId(UUID entry);
     List<QueueTicket> findBySeasonId(UUID season);
     long countByState(String state);

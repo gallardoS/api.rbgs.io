@@ -81,6 +81,26 @@ paths:
         '403': { description: Missing lab CSRF or captain authorization }
         '404': { description: Actor, group or room unavailable }
         '409': { description: Command conflicts with current state }
+  /local/premade/rooms/{room}:
+    get:
+      operationId: getPremadeLabPastRoom
+      security: [{ soloQueueLabSession: [] }]
+      summary: Read a finished simulation room as one of its participants
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Private no-store room snapshot, independent of the current queue ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [room, simulatedMatch, serverTime]
+                properties:
+                  room: { $ref: '#/components/schemas/SoloQueueLabRoom' }
+                  simulatedMatch: { $ref: '#/components/schemas/PremadeLabStatus/properties/simulatedMatch' }
+                  serverTime: { type: string, format: date-time }
+        '404': { description: Room is unavailable to the current simulation actor }
   /local/premade/rooms/{room}/response:
     post:
       operationId: respondPremadeLabRoom
@@ -119,6 +139,33 @@ paths:
               schema: { $ref: '#/components/schemas/PremadeLabStatus' }
         '403': { description: Missing lab CSRF or captain authorization }
         '404': { description: Actor, group or room unavailable }
+        '409': { description: Command conflicts with current state }
+  /local/premade/rooms/{room}/simulation:
+    post:
+      operationId: advancePremadeLabMatch
+      security: [{ soloQueueLabSession: [] }]
+      summary: Advance the local premade simulation as a match captain
+      description: Both captains confirm preparation. Ending simulated play releases reservations before review. The submitted winner is a simulation fixture.
+      parameters:
+        - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [READY, END_PLAY, SUBMIT_EVIDENCE, RESOLVE] }
+                winner: { type: string, enum: [A, B], description: Required for SUBMIT_EVIDENCE }
+      responses:
+        '200':
+          description: No-store updated simulation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PremadeLabStatus' }
+        '403': { description: Missing lab CSRF or match captain authorization }
+        '404': { description: Actor or room unavailable }
         '409': { description: Command conflicts with current state }
   /local/premade/{entry}:
     delete:
@@ -2245,7 +2292,10 @@ components:
       properties:
         id: { type: string, format: uuid }
         source: { type: string, enum: [SIMULATION, FOREVER] }
-        status: { type: string, enum: [PROPOSED, PREPARING, CANCELLED] }
+        status:
+          type: string
+          enum: [PROPOSED, PREPARING, CANCELLED, PLAYING, AWAITING_EVIDENCE, UNDER_REVIEW, RESOLVED]
+          description: States after preparation are currently available in the premade lab.
         acceptanceDeadline: { type: string, format: date-time }
         preparationDeadline: { type: [string, 'null'], format: date-time }
         cancellationReason: { type: [string, 'null'] }
@@ -2291,6 +2341,7 @@ components:
         - type: object
           properties:
             source: { type: string, const: FOREVER }
+            status: { type: string, enum: [PROPOSED, PREPARING, CANCELLED] }
       description: Private real-player room. Source is FOREVER; names contain character and realm, never private Battle.net contact tags. Hidden MMR is excluded.
     PremadeQueueAdmission:
       type: object
@@ -2312,7 +2363,7 @@ components:
       description: Private premade status. Ticket ID identifies the ten-player entry for group cancellation, not an individual ticket. No hidden MMR, complete evidence or other queues' snapshots are exposed. Availability reflects server-resolved eligibility; it remains false with the default unavailable game gateway. Initial MMR is persisted as 1500 with visible rating 0, independently by season, queue and ACCOUNT/CHARACTER subject. Result movements/replay remain feature 12.
     PremadeLabStatus:
       type: object
-      required: [simulation, available, blockers, groupId, groupRevision, captainId, canControl, ticket, room, matchId, serverTime, revision]
+      required: [simulation, available, blockers, groupId, groupRevision, captainId, canControl, ticket, room, matchId, serverTime, revision, simulatedMatch, recentRooms]
       properties:
         simulation: { type: boolean, const: true }
         available: { type: boolean }
@@ -2327,6 +2378,26 @@ components:
             - { $ref: '#/components/schemas/SoloQueueLabRoom' }
             - { type: 'null' }
         matchId: { type: 'null' }
+        recentRooms:
+          type: array
+          maxItems: 10
+          description: Finished rooms for the current actor in the current simulation generation, including rooms awaiting evidence or review.
+          items:
+            type: object
+            required: [id, status, winner, version]
+            properties:
+              id: { type: string, format: uuid }
+              status: { type: string, enum: [AWAITING_EVIDENCE, UNDER_REVIEW, RESOLVED] }
+              winner: { enum: [A, B, null] }
+              version: { type: integer, format: int64 }
+        simulatedMatch:
+          type: [object, 'null']
+          required: [captainAReady, captainBReady, assignment, winner]
+          properties:
+            captainAReady: { type: boolean }
+            captainBReady: { type: boolean }
+            assignment: { type: string, description: Private simulation reference for the current actor }
+            winner: { enum: [A, B, null], description: Simulated winner once evidence is submitted }
         serverTime: { type: string, format: date-time }
         revision: { type: string }
     PremadeLabSetup:

@@ -9,6 +9,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.mock.web.MockHttpSession;
+import static io.rbgs.api.matchmaking.PremadeQueueLab.MatchAction.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -89,5 +90,82 @@ class PremadeQueueLabTests {
         enter(next);assertEquals("QUEUED",lab.status(next).ticket().state());
         lab.addOpponents(next,1);lab.cycle();assertEquals("PROPOSED",lab.status(next).room().status());
         assertThrows(org.springframework.web.server.ResponseStatusException.class,()->lab.transferCaptain(next,actor));
+    }
+
+    @Test void simulatedRoomKeepsPrivateAssignmentsAndReleasesPlayersBeforeReview() {
+        UUID actor = actor();
+        var room = prepareRoom(actor);
+        var participants = java.util.stream.Stream.concat(room.teamA().stream(),room.teamB().stream()).toList();
+        UUID otherCaptain = participants.stream().filter(p->p.captain()&&!p.accountId().equals(actor))
+                .findFirst().orElseThrow().accountId();
+        UUID member = participants.stream().filter(p->!p.captain()).findFirst().orElseThrow().accountId();
+        UUID outsider = lab.setup(actor).players().stream().filter(p->participants.stream().noneMatch(m->m.accountId().equals(p.id())))
+                .findFirst().orElseThrow().id();
+        assertNotEquals(lab.status(actor).simulatedMatch().assignment(),lab.status(member).simulatedMatch().assignment());
+        assertNull(lab.status(outsider).simulatedMatch());
+        assertThrows(NoSuchElementException.class,()->lab.advance(outsider,room.id(),READY,null));
+        assertThrows(SecurityException.class,()->lab.advance(member,room.id(),READY,null));
+        assertThrows(IllegalStateException.class,()->lab.advance(actor,room.id(),END_PLAY,null));
+
+        lab.advance(actor,room.id(),READY,null);
+        var confirmed = lab.status(otherCaptain);
+        assertEquals("PREPARING",confirmed.room().status());
+        assertTrue(confirmed.simulatedMatch().captainAReady() ^ confirmed.simulatedMatch().captainBReady());
+        lab.advance(actor,room.id(),READY,null);
+        assertEquals(confirmed.revision(),lab.status(otherCaptain).revision());
+        lab.advance(otherCaptain,room.id(),READY,null);
+        assertEquals("PLAYING",lab.status(member).room().status());
+        rooms.expire(room.preparationDeadline());
+        assertEquals("PLAYING",lab.status(member).room().status());
+        participants.forEach(p->assertTrue(tickets.hasReservation(p.accountId())));
+
+        lab.advance(actor,room.id(),END_PLAY,null);
+        lab.advance(otherCaptain,room.id(),END_PLAY,null);
+        assertEquals("AWAITING_EVIDENCE",lab.status(member).room().status());
+        participants.forEach(p->assertFalse(tickets.hasReservation(p.accountId())));
+        String assignment = lab.status(actor).simulatedMatch().assignment();
+        enter(actor);
+        var searching = lab.status(actor);
+        assertEquals("QUEUED",searching.ticket().state());
+        assertNull(searching.room());
+        assertEquals(room.id(),searching.recentRooms().getFirst().id());
+        assertEquals(assignment,lab.pastRoom(actor,room.id()).simulatedMatch().assignment());
+        assertNotEquals(assignment,lab.pastRoom(member,room.id()).simulatedMatch().assignment());
+        assertThrows(NoSuchElementException.class,()->lab.pastRoom(outsider,room.id()));
+        assertTrue(lab.status(outsider).recentRooms().isEmpty());
+
+        lab.advance(otherCaptain,room.id(),SUBMIT_EVIDENCE,"B");
+        assertEquals("UNDER_REVIEW",lab.pastRoom(actor,room.id()).room().status());
+        assertNotEquals(searching.revision(),lab.status(actor).revision());
+        assertThrows(IllegalStateException.class,()->lab.advance(actor,room.id(),SUBMIT_EVIDENCE,"A"));
+        lab.advance(actor,room.id(),RESOLVE,null);
+        lab.advance(otherCaptain,room.id(),RESOLVE,null);
+        lab.respond(member,room.id(),false);
+        var resolved = lab.pastRoom(member,room.id());
+        assertEquals("RESOLVED",resolved.room().status());
+        assertEquals("B",resolved.simulatedMatch().winner());
+        assertNull(lab.status(actor).matchId());
+        assertEquals(searching.ticket().id(),lab.status(actor).ticket().id());
+        assertEquals("QUEUED",lab.status(actor).ticket().state());
+    }
+
+    @Test void preparationExpiryCancelsEvenAfterOneCaptainConfirms() {
+        UUID actor = actor();
+        var room = prepareRoom(actor);
+        lab.advance(actor,room.id(),READY,null);
+        rooms.expire(room.preparationDeadline());
+        assertEquals("DEADLINE_EXPIRED",lab.status(actor).room().cancellationReason());
+        assertNull(lab.status(actor).simulatedMatch());
+        assertFalse(tickets.hasReservation(actor));
+    }
+
+    private SoloQueueRooms.Room prepareRoom(UUID actor) {
+        enter(actor);
+        lab.addOpponents(actor,1);
+        lab.cycle();
+        UUID id = lab.status(actor).room().id();
+        lab.respond(actor,id,true);
+        lab.acceptBots(actor,id);
+        return lab.status(actor).room();
     }
 }

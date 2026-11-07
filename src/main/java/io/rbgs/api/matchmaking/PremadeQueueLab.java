@@ -4,6 +4,7 @@ import io.rbgs.api.characters.selection.*;
 import io.rbgs.api.groups.*;
 import io.rbgs.api.identity.*;
 import io.rbgs.api.matches.MatchRoomRepository;
+import io.rbgs.api.matches.MatchRoomEntity;
 import io.rbgs.api.seasons.*;
 import java.time.Instant;
 import java.util.*;
@@ -37,6 +38,8 @@ public class PremadeQueueLab {
     private final JdbcTemplate db;
     public record Player(UUID id,String name,UUID groupId,boolean captain) { }
     public record Setup(UUID generation,UUID accountId,List<Player> players,long queueDepth) { }
+    public record PastRoom(SoloQueueRooms.Room room,PremadeQueueService.SimulatedMatch simulatedMatch,Instant serverTime) { }
+    public enum MatchAction { READY, END_PLAY, SUBMIT_EVIDENCE, RESOLVE }
 
     @Transactional
     public void reset() {
@@ -132,10 +135,46 @@ public class PremadeQueueLab {
         requireActor(actor);requireRoom(actor,room);
         for(var t:tickets.findByProposalIdOrderByAccountId(room))if(!t.getAccountId().equals(actor))rooms.respond(t.getAccountId(),room,true);
     }
-    private void requireRoom(UUID actor,UUID room) {
+
+    @Transactional
+    public void advance(UUID actor,UUID roomId,MatchAction action,String winner) {
+        tickets.lockCoordinator();
+        requireActor(actor);
+        var room = requireRoom(actor,roomId);
+        if (!actor.equals(room.getCaptainA()) && !actor.equals(room.getCaptainB()))
+            throw new SecurityException("Only a match captain can run this simulation action");
+        if (room.due(Instant.now())) {
+            rooms.cancelRoom(roomId,"DEADLINE_EXPIRED");
+            return;
+        }
+        switch (action) {
+            case READY -> room.confirmSimulatedPreparation(actor);
+            case END_PLAY -> {
+                if (room.endSimulatedPlay())
+                    tickets.findByProposalIdOrderByAccountId(roomId).forEach(QueueTicket::releaseRoom);
+            }
+            case SUBMIT_EVIDENCE -> room.submitSimulatedEvidence(winner);
+            case RESOLVE -> room.resolveSimulation();
+        }
+    }
+
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public PastRoom pastRoom(UUID actor,UUID roomId) {
+        requireActor(actor);
+        var room = requireRoom(actor,roomId);
+        if (!Set.of("AWAITING_EVIDENCE","UNDER_REVIEW","RESOLVED").contains(room.getStatus()))
+            throw new NoSuchElementException();
+        var ticket = tickets.findByAccountIdAndProposalId(actor,roomId).orElseThrow();
+        return new PastRoom(rooms.own(actor,roomId),PremadeQueueService.SimulatedMatch.forParticipant(room,ticket),Instant.now());
+    }
+
+    private MatchRoomEntity requireRoom(UUID actor,UUID room) {
         var state=lab.findById(1).orElseThrow();
         var row=roomRows.findById(room).filter(r->r.getSource().equals("SIMULATION")&&r.getSeasonId().equals(state.getSeasonId())).orElseThrow();
-        rooms.own(actor,row.getId());
+        tickets.findByAccountIdAndProposalId(actor,room)
+                .filter(t->t.getSource().equals("SIMULATION")&&t.getQueueType().equals("PREMADE")&&t.getSeasonId().equals(row.getSeasonId()))
+                .orElseThrow();
+        return row;
     }
     @Transactional
     public void addOpponents(UUID actor,int count) {

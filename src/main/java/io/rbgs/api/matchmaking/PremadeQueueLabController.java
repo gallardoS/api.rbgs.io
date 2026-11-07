@@ -18,6 +18,7 @@ public class PremadeQueueLabController {
     private final PremadeQueueLab lab;
     private final PremadeQueueLabEvents events;
     public record Opponents(@Min(1) @Max(9) int count) { }
+    public record MatchAction(@NotNull PremadeQueueLab.MatchAction action, @Pattern(regexp="[AB]") String winner) { }
     @GetMapping("/setup")
     public ResponseEntity<PremadeQueueLab.Setup> setup(HttpSession session,CsrfToken csrf) {
         csrf.getToken();var setup=lab.setup((UUID)session.getAttribute(ACTOR));
@@ -50,8 +51,18 @@ public class PremadeQueueLabController {
     public ResponseEntity<PremadeQueueService.Status> respond(HttpSession session,@PathVariable UUID room,@Valid @RequestBody SoloQueueController.Response body) {
         lab.respond(actor(session),room,body.accept());return reply(session);
     }
+    @GetMapping("/rooms/{room}")
+    public ResponseEntity<PremadeQueueLab.PastRoom> pastRoom(HttpSession session,@PathVariable UUID room) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(lab.pastRoom(actor(session),room));
+    }
     @PostMapping("/rooms/{room}/test-acceptances")
     public ResponseEntity<PremadeQueueService.Status> bots(HttpSession session,@PathVariable UUID room) { lab.acceptBots(actor(session),room);return reply(session); }
+    @PostMapping("/rooms/{room}/simulation")
+    public ResponseEntity<PremadeQueueService.Status> advance(HttpSession session,@PathVariable UUID room,
+            @Valid @RequestBody MatchAction request) {
+        lab.advance(actor(session),room,request.action(),request.winner());
+        return reply(session);
+    }
     @GetMapping(value="/events",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(HttpSession session,HttpServletResponse response) {
         response.setHeader("Cache-Control","no-store");return events.open(session.getId(),actor(session));
@@ -65,7 +76,7 @@ public class PremadeQueueLabController {
     @ExceptionHandler(NoSuchElementException.class)
     ResponseEntity<ProblemDetail> missing() { return problem(HttpStatus.NOT_FOUND,"Simulation participant or room unavailable"); }
     @ExceptionHandler(SecurityException.class)
-    ResponseEntity<ProblemDetail> forbidden() { return problem(HttpStatus.FORBIDDEN,"Only the captain can control this search"); }
+    ResponseEntity<ProblemDetail> forbidden(SecurityException error) { return problem(HttpStatus.FORBIDDEN,error.getMessage()); }
     @ExceptionHandler({IllegalStateException.class,IllegalArgumentException.class})
     ResponseEntity<ProblemDetail> conflict(RuntimeException error) { return problem(HttpStatus.CONFLICT,error.getMessage()); }
     private ResponseEntity<ProblemDetail> problem(HttpStatus status,String detail) {

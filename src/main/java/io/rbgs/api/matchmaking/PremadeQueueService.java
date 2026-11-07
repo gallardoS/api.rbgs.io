@@ -1,6 +1,7 @@
 package io.rbgs.api.matchmaking;
 
 import io.rbgs.api.groups.*;
+import io.rbgs.api.matches.MatchRoomEntity;
 import jakarta.validation.constraints.*;
 import java.time.Instant;
 import java.util.*;
@@ -30,9 +31,15 @@ public class PremadeQueueService {
     private final io.rbgs.api.characters.selection.CharacterIdentityRepository characters;
     private final ConfirmedRatingStore ratings;
     public record Admission(@NotNull UUID groupId,@NotNull @Min(0) Long groupRevision) { }
+    public record SimulatedMatch(boolean captainAReady,boolean captainBReady,String assignment,String winner) {
+        static SimulatedMatch forParticipant(MatchRoomEntity room,QueueTicket ticket) {
+            return new SimulatedMatch(room.isCaptainAReady(),room.isCaptainBReady(),"LAB:"+ticket.getId(),room.getSimulatedWinner());
+        }
+    }
+    public record RecentRoom(UUID id,String status,String winner,long version) { }
     public record Status(boolean simulation,UUID groupId,Long groupRevision,UUID captainId,boolean canControl,
             boolean available,List<String> blockers,SoloQueueService.Ticket ticket,SoloQueueRooms.Room room,
-            UUID matchId,Instant serverTime,String revision) { }
+            UUID matchId,Instant serverTime,String revision,SimulatedMatch simulatedMatch,List<RecentRoom> recentRooms) { }
 
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Status status(UUID account) { return snapshot(account,false); }
@@ -52,15 +59,24 @@ public class PremadeQueueService {
                 simulation?"SIMULATION":"FOREVER","PREMADE",PageRequest.of(0,1)).stream().findFirst().orElse(null);
         var entry=latest==null||latest.getPremadeEntryId()==null?null:entries.findById(latest.getPremadeEntryId()).orElse(null);
         var room=latest==null||latest.getProposalId()==null?null:rooms.own(account,latest.getProposalId());
+        var roomRow=room==null?null:roomRows.findById(room.id()).orElseThrow();
+        var simulatedMatch=simulation&&roomRow!=null&&roomRow.getPreparationDeadline()!=null
+                &&!roomRow.getStatus().equals("CANCELLED")
+                ? SimulatedMatch.forParticipant(roomRow,latest) : null;
+        List<RecentRoom> recentRooms=simulation&&latest!=null
+                ? roomRows.recentFinishedSimulations(account,latest.getSeasonId(),PageRequest.of(0,10)).stream()
+                    .map(r->new RecentRoom(r.getId(),r.getStatus(),r.getSimulatedWinner(),r.getVersion())).toList()
+                : List.of();
         boolean captain=group!=null&&group.getCaptainId().equals(account);
         boolean controls=captain&&(entry==null||latest.getState().equals("CANCELLED")||entry.getGroupId().equals(group.getId()));
         var ticket=entry==null?null:new SoloQueueService.Ticket(entry.getId(),latest.getState(),entry.getEnteredAt(),
                 latest.getProposalId(),entry.getVersion()+latest.getVersion(),latest.getCancellationReason());
         String revision=blockers+":"+(group==null?"none":group.getId()+":"+group.getRevision()+":"+group.getCaptainId())
                 +":"+(ticket==null?"none":ticket.id()+":"+ticket.version())+":"+(room==null?"none":room.id()+":"+room.version());
+        if (!recentRooms.isEmpty()) revision+=":"+recentRooms.stream().map(r->r.id()+":"+r.version()).toList();
         return new Status(simulation,group==null?null:group.getId(),group==null?null:group.getRevision(),
                 group==null?null:group.getCaptainId(),controls,blockers.isEmpty(),List.copyOf(blockers),ticket,room,
-                room==null?null:roomRows.findById(room.id()).orElseThrow().getMatchId(),Instant.now(),revision);
+                roomRow==null?null:roomRow.getMatchId(),Instant.now(),revision,simulatedMatch,recentRooms);
     }
 
     @Transactional
