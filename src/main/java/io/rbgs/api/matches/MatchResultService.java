@@ -5,6 +5,7 @@ import io.rbgs.api.evidence.CaptureProcessingRepository;
 import io.rbgs.api.evidence.CaptureJson;
 import io.rbgs.api.identity.AccountRepository;
 import io.rbgs.api.identity.AccountService;
+import io.rbgs.api.ratings.RatingResults;
 import java.time.*;
 import java.util.*;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +32,7 @@ public class MatchResultService {
     private final AccountRepository accountRepository;
     private final MatchAvailability availability;
     private final MatchDisputeService disputes;
+    private final RatingResults ratings;
 
     public record Result(UUID matchId, String mode, String status, String reason, String outcome,
             String winningTeam, int reportsA, int reportsB, int requiredPerTeam, Instant deadline,
@@ -84,6 +86,7 @@ public class MatchResultService {
                 now, actor, request.expectedVersion(), correction));
         disputes.resolved(match, actor, now);
         matches.flush();
+        ratings.synchronize(match);
         return view(match);
     }
 
@@ -186,7 +189,7 @@ public class MatchResultService {
         availability.requireAvailable(match);
         return new Result(match.getId(), match.getMode().name(), match.getVerificationStatus(), match.getVerificationReason(),
                 match.getOutcomeKind(), match.getWinningTeam(), match.getReportsA(), match.getReportsB(), MatchVerification.QUORUM,
-                match.getVerificationDeadline(), match.getResultVersion(), MatchVerification.POLICY, false,
+                match.getVerificationDeadline(), match.getResultVersion(), MatchVerification.POLICY, ratings.applied(match),
                 Set.of("RESOLVED", "VOIDED").contains(match.getVerificationStatus()) ? match.getDecisionReason() : null,
                 Set.of("RESOLVED", "VOIDED").contains(match.getVerificationStatus()) ? match.getDecisionAt() : null);
     }
@@ -222,6 +225,12 @@ public class MatchResultService {
         boolean changed = !previous.equals(decision.status()) || !Objects.equals(match.getVerificationReason(), decision.reason())
                 || !Objects.equals(match.getOutcomeKind(), decision.outcome()) || !Objects.equals(match.getWinningTeam(), decision.winner());
         match.result(decision.status(), decision.reason(), decision.outcome(), decision.winner(), decision.a(), decision.b());
-        if (changed) events.save(new MatchResultEvent(match, previous, json.encode(reports.stream().map(e -> e.getId().toString()).toList()), now));
+        if (changed) {
+            events.save(new MatchResultEvent(match, previous, json.encode(reports.stream().map(e -> e.getId().toString()).toList()), now));
+            if (ratings.enabled() && match.getMode() == MatchMode.MATCHMADE) {
+                matches.flush();
+                ratings.synchronize(match);
+            }
+        }
     }
 }

@@ -38,6 +38,7 @@ class SoloQueuePlayIntegrationTests {
     @Autowired MatchRepository matches;
     @Autowired MatchAssignmentRepository assignments;
     @Autowired JdbcTemplate db;
+    @Autowired ConfirmedRatingStore ratings;
     @Autowired MockMvc mvc;
     @Autowired javax.sql.DataSource dataSource;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
@@ -71,12 +72,15 @@ class SoloQueuePlayIntegrationTests {
             UUID device=UUID.randomUUID();
             db.update("INSERT INTO rbgs.devices(id,account_id,token_hash,created_at,expires_at,granted_scope,last_seen_at) VALUES(?,?,?,now(),now()+interval '1 day','companion:status companion:assignments evidence:write',now())",device,account.id(),UUID.randomUUID().toString());
             var selected=new SeasonSelection(account.id(),season.getId());selected.choose(character.getId(),RatingSubjectType.ACCOUNT,i<2?MatchRole.FC:i<8?MatchRole.HEALER:MatchRole.DPS,false);selected.useDevice(device);
-            players.add(selections.saveAndFlush(selected));
+            selected=selections.saveAndFlush(selected);
+            players.add(selected);
+            ratings.initializeSelection(selected.getId());
         }
     }
     @AfterEach void cleanup() {
         var roomIds=db.queryForList("SELECT id FROM rbgs.match_rooms WHERE season_id=?",UUID.class,season.getId());
         db.update("DELETE FROM rbgs.queue_tickets WHERE season_id=?",season.getId());
+        db.update("DELETE FROM rbgs.match_competitive_context WHERE season_id=?",season.getId());
         db.update("DELETE FROM rbgs.match_rooms WHERE season_id=?",season.getId());
         for(var id:roomIds)db.update("DELETE FROM rbgs.queue_proposals WHERE id=?",id);
         for(var p:players)db.update("DELETE FROM rbgs.match_assignments WHERE account_id=?",p.getAccountId());

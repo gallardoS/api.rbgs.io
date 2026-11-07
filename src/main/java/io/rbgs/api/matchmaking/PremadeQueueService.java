@@ -2,6 +2,7 @@ package io.rbgs.api.matchmaking;
 
 import io.rbgs.api.groups.*;
 import io.rbgs.api.matches.MatchRoomEntity;
+import io.rbgs.api.ratings.RatingResults;
 import jakarta.validation.constraints.*;
 import java.time.Instant;
 import java.util.*;
@@ -27,9 +28,8 @@ public class PremadeQueueService {
     private final SoloQueueGameGateway game;
     private final io.rbgs.api.matches.MatchRepository matches;
     private final io.rbgs.api.matches.MatchAssignmentRepository assignments;
-    private final org.springframework.jdbc.core.JdbcTemplate db;
     private final io.rbgs.api.characters.selection.CharacterIdentityRepository characters;
-    private final ConfirmedRatingStore ratings;
+    private final RatingResults ratings;
     public record Admission(@NotNull UUID groupId,@NotNull @Min(0) Long groupRevision) { }
     public record SimulatedMatch(boolean captainAReady,boolean captainBReady,String assignment,String winner) {
         static SimulatedMatch forParticipant(MatchRoomEntity room,QueueTicket ticket) {
@@ -145,15 +145,7 @@ public class PremadeQueueService {
                     throw new IllegalStateException("Shared Match evidence identity differs from the proposal");
             }
             var first=entries.findById(entryIds.getFirst()).orElseThrow().candidate();
-            var frozen=new LinkedHashMap<String,Object>();frozen.put("proposal",expected);frozen.put("ratingSubjectType",first.ratingSubjectType());
-            var ratingInputs=new ArrayList<ConfirmedRatingStore.Snapshot>();
-            for(var team:List.of(expected.teamA(),expected.teamB()))for(var player:team)ratingInputs.add(ratings.confirmed(first.seasonId(),
-                    ConfirmedRatingStore.Queue.PREMADE,first.ratingSubjectType(),first.ratingSubjectType()==io.rbgs.api.seasons.RatingSubjectType.ACCOUNT
-                            ?player.accountId():player.characterId()).orElseThrow());
-            frozen.put("ratingInputs",ratingInputs);
-            // Immutable pre-match context is input for feature 12; this does not apply speculative rating changes.
-            db.update("INSERT INTO rbgs.match_competitive_context(match_id,room_id,season_id,queue_type,snapshot,created_at) VALUES (?,?,?,'PREMADE',?,?)",
-                    match,id,first.seasonId(),json.writeValueAsString(frozen),java.sql.Timestamp.from(Instant.now()));
+            ratings.freeze(match,id,first.seasonId(),ConfirmedRatingStore.Queue.PREMADE,first.ratingSubjectType(),expected);
             room.linkMatch(shared.getId());
         }
     }

@@ -2,6 +2,7 @@ package io.rbgs.api.matchmaking;
 
 import io.rbgs.api.matches.*;
 import io.rbgs.api.identity.AccountRepository;
+import io.rbgs.api.ratings.RatingResults;
 import java.time.Instant;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ public class SoloQueueRooms {
     private final AccountRepository accounts;
     private final MatchRepository matches;
     private final io.rbgs.api.characters.selection.CharacterIdentityRepository characters;
+    private final RatingResults ratings;
 
     public record Member(UUID accountId,String name,String role,boolean captain,boolean accepted) { }
     public record Room(UUID id,String source,String status,Instant acceptanceDeadline,Instant preparationDeadline,
@@ -74,7 +76,14 @@ public class SoloQueueRooms {
     }
     private void cancel(MatchRoomEntity room,List<QueueTicket> roster,String reason) {
         room.cancel(reason);
-        if(room.getMatchId()!=null)matches.lockById(room.getMatchId()).orElseThrow().cancel(Instant.now());
+        if(room.getMatchId()!=null) {
+            var match=matches.lockById(room.getMatchId()).orElseThrow();
+            match.cancel(Instant.now());
+            if (ratings.enabled()) {
+                matches.flush();
+                ratings.synchronize(match);
+            }
+        }
         roster.stream().filter(t->t.getState().equals("PROPOSED")).forEach(QueueTicket::releaseRoom);
     }
     @Transactional

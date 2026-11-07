@@ -2,6 +2,8 @@ package io.rbgs.api.matchmaking;
 
 import io.rbgs.api.identity.AccountRepository;
 import io.rbgs.api.matches.*;
+import io.rbgs.api.ratings.RatingResults;
+import io.rbgs.api.seasons.SeasonRepository;
 import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
 import java.util.*;
@@ -24,6 +26,8 @@ public class SoloQueueService {
     private final SoloQueueRooms rooms;
     private final SoloQueueStore store;
     private final SoloQueueGameGateway game;
+    private final SeasonRepository seasons;
+    private final RatingResults ratings;
     public record Admission(@NotNull UUID seasonId,@NotNull Long seasonVersion,@NotNull Long selectionVersion) { }
     public record Ticket(UUID id,String state,Instant enteredAt,UUID proposalId,long version,String cancellationReason) { }
     public record Status(boolean available,List<String> blockers,Ticket ticket,SoloQueueRooms.Room room,UUID matchId,Instant serverTime,String revision) { }
@@ -71,17 +75,20 @@ public class SoloQueueService {
         }
         rooms.respond(account,id,accept);
         if(room.getStatus().equals("PREPARING")&&room.getMatchId()==null) {
-            UUID match=game.createMatch(proposals.findById(id).orElseThrow().proposal(),Instant.now());
+            var expected=proposals.findById(id).orElseThrow().proposal();
+            UUID match=game.createMatch(expected,Instant.now());
             var shared=matches.findById(match).filter(m->m.getMode()==MatchMode.MATCHMADE&&m.getEvidencePolicy()==MatchEvidencePolicy.FULL_ROSTER
                     &&m.getCancelledAt()==null&&!Set.of("DARKSPEAR_DIAGNOSTIC","TBC_ANNIVERSARY_WSG_TEST").contains(m.getProfile()))
                     .orElseThrow(()->new IllegalStateException("Game adapter did not create an eligible shared Match"));
-            var expected=proposals.findById(id).orElseThrow().proposal();var members=assignments.findByMatchId(match);
+            var members=assignments.findByMatchId(match);
             if(members.size()!=20)throw new IllegalStateException("Shared Match requires twenty assignments");
             for(var team:List.of(expected.teamA(),expected.teamB()))for(var player:team) {
                 String key=team==expected.teamA()?"A":"B";
                 if(members.stream().filter(m->m.getAccountId().equals(player.accountId())&&m.getCharacterId().equals(player.characterId())
                         &&key.equals(m.getAssignedTeam())).count()!=1)throw new IllegalStateException("Shared Match roster differs from proposal");
             }
+            var season=seasons.findById(room.getSeasonId()).orElseThrow();
+            ratings.freeze(match,id,season.getId(),ConfirmedRatingStore.Queue.SOLO,season.getRatingSubjectType(),expected);
             room.linkMatch(shared.getId());
         }
     }
