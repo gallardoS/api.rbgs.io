@@ -10,4 +10,9 @@ public interface PremadeQueueEntryRepository extends JpaRepository<PremadeQueueE
     @org.springframework.data.jpa.repository.Query("select e from PremadeQueueEntry e where e.groupId=:group and "
             +"(e.state='QUEUED' or exists (select t.id from QueueTicket t where t.premadeEntryId=e.id and t.state='PROPOSED'))")
     List<PremadeQueueEntry> reservedForGroup(UUID group);
+    @org.springframework.data.jpa.repository.Query("""
+        select count(t) > 0 from QueueTicket t, PremadeQueueEntry e
+        where t.premadeEntryId=e.id and e.groupId=:group and t.state='PROPOSED'
+        """)
+    boolean hasFrozenRoster(UUID group);
 }

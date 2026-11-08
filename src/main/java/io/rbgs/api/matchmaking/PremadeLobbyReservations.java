@@ -13,6 +13,10 @@ public class PremadeLobbyReservations {
     private final PremadeQueueEntryRepository entries;
     private final QueueTicketRepository tickets;
 
+    public boolean hasFrozenRoster(UUID group) {
+        return entries.hasFrozenRoster(group);
+    }
+
     /** Caller must acquire the queue coordinator before locking the affected group(s). */
     @Transactional(propagation=Propagation.MANDATORY)
     public void beforeLockedLobbyChange(UUID group) {

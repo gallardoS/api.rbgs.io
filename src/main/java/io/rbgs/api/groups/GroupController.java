@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 public class GroupController {
     private final GroupService service;
     private final GroupEventStreams events;
+    private final GroupLifecycle lifecycle;
     private final io.rbgs.api.identity.AccountService accounts;
     public record Revision(@NotNull @PositiveOrZero Long expectedRevision) { }
     public record Invite(@NotNull @PositiveOrZero Long expectedRevision,
@@ -37,7 +38,10 @@ public class GroupController {
     }
     @GetMapping("/api/v1/me/group")
     public ResponseEntity<GroupService.Group> own(Authentication auth, CsrfToken csrf) {
-        csrf.getToken(); return response(service.own(auth));
+        csrf.getToken();
+        var profile = accounts.currentUser(auth);
+        if (profile != null) lifecycle.browserSeen(profile.id());
+        return response(service.own(auth));
     }
     @GetMapping("/api/v1/me/group-invitations")
     public ResponseEntity<List<GroupService.Invitation>> incoming(Authentication auth, CsrfToken csrf) {

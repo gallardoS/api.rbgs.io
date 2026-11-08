@@ -34,6 +34,7 @@ class GroupIntegrationTests {
     @Autowired io.rbgs.api.characters.AvatarPreferenceService avatarPreferences;
     @MockitoBean io.rbgs.api.characters.WowCharacterService provider;
     @Autowired GroupEventStreams streams;
+    @Autowired GroupLifecycle lifecycle;
     @Autowired org.springframework.session.SessionRepository sessions;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
     private final List<String> streamSessions = new ArrayList<>();
@@ -98,6 +99,52 @@ class GroupIntegrationTests {
         devices.heartbeat("Bearer " + device.token());
         return selections.save(auth(player), new SelectionRequest(season.getId(), season.getVersion(), null, null,
                 new SelectionRequest.Declaration("Character", "Fixture realm"), MatchRole.HEALER, true, device.deviceId()));
+    }
+
+    @Test void disconnectGraceKeepsReconnectsAndClosesAnExpiredCaptainsLobby() {
+        var group = join(join(service.create(auth(0)), 0, 1), 0, 2);
+        var now = Instant.now();
+        db.update("UPDATE rbgs.group_members SET browser_seen_at=? WHERE account_id=?",
+                java.sql.Timestamp.from(now.minusSeconds(29)), players.get(0).id());
+        service.expire(group.id(), now);
+        assertEquals(players.get(0).id(), service.own(auth(1)).captainId());
+
+        lifecycle.browserSeen(players.get(0).id());
+        service.expire(group.id(), now.plusSeconds(2));
+        assertNotNull(service.own(auth(0)));
+
+        db.update("UPDATE rbgs.group_members SET browser_seen_at=? WHERE account_id=?",
+                java.sql.Timestamp.from(now.minusSeconds(31)), players.get(1).id());
+        service.expire(group.id(), now);
+        assertNull(service.own(auth(1)));
+        assertEquals(players.get(0).id(), service.own(auth(2)).captainId());
+
+        db.update("UPDATE rbgs.group_members SET browser_seen_at=? WHERE account_id=?",
+                java.sql.Timestamp.from(now.minusSeconds(31)), players.get(0).id());
+        assertTrue(service.expirationCandidates(now).contains(group.id()));
+        service.expire(group.id(), now);
+        assertNull(service.own(auth(0)));
+        assertNull(service.own(auth(2)));
+    }
+
+    @Test void idleDeadlineClosesLobbyEvenWhenMembersAreConnected() {
+        var group = join(service.create(auth(0)), 0, 1);
+        var now = Instant.now();
+        var activity = now.minusSeconds(25 * 60);
+        db.update("UPDATE rbgs.premade_groups SET last_match_activity_at=? WHERE id=?",
+                java.sql.Timestamp.from(activity), group.id());
+        var deadline = service.own(auth(0)).idleClosesAt();
+        assertEquals(activity.plusSeconds(30 * 60).getEpochSecond(), deadline.getEpochSecond());
+        service.expire(group.id(), now);
+        assertNotNull(service.own(auth(0)));
+
+        lifecycle.browserSeen(players.get(0).id());
+        lifecycle.browserSeen(players.get(1).id());
+        db.update("UPDATE rbgs.premade_groups SET last_match_activity_at=? WHERE id=?",
+                java.sql.Timestamp.from(now.minusSeconds(30 * 60 + 1)), group.id());
+        service.expire(group.id(), now);
+        assertNull(service.own(auth(0)));
+        assertNull(service.own(auth(1)));
     }
     private void conflict(Runnable action) { assertEquals(409, assertThrows(ResponseStatusException.class, action::run).getStatusCode().value()); }
 

@@ -6,6 +6,8 @@ import io.rbgs.api.identity.*;
 import io.rbgs.api.matches.MatchAssignmentRepository;
 import io.rbgs.api.seasons.*;
 import java.time.Instant;
+import java.time.Duration;
+import java.sql.Timestamp;
 import java.security.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -41,6 +43,8 @@ public class GroupService {
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    static final Duration BROWSER_GRACE = Duration.ofSeconds(30);
+    private static final Duration LOBBY_IDLE_LIMIT = Duration.ofMinutes(30);
 
     public record Member(UUID accountId, String displayName, boolean captain, String characterName, String realm,
             MatchRole role, long roleVersion, Long selectionVersion, boolean confirmed, boolean companionConnected,
@@ -48,7 +52,7 @@ public class GroupService {
             io.rbgs.api.characters.dto.WowAccountProfile.WowCharacter character) { }
     public record Invitation(UUID id, UUID groupId, String captainName, String recipientName, Instant expiresAt) { }
     public record Group(UUID id, UUID captainId, long revision, String region, String lobbyCode, List<Member> members, List<Invitation> invitations,
-            boolean queueReady, List<String> blockers) { }
+            boolean queueReady, List<String> blockers, Instant idleClosesAt) { }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Group own(Authentication auth) {
@@ -135,6 +139,7 @@ public class GroupService {
             } else source.rosterChanged();
             existing.moveTo(id, members.nextMembershipOrder());
             members.flush();
+            jdbc.update("UPDATE rbgs.group_members SET browser_seen_at=clock_timestamp() WHERE account_id=?", actor);
             if (emptySource) { groups.delete(source); groups.flush(); }
         }
         invitations.deleteByAccountId(actor);
@@ -234,21 +239,63 @@ public class GroupService {
         if (!actor.equals(target)) requireCaptain(group, actor);
         var member = members.findById(target).filter(m -> m.getGroupId().equals(id)).orElseThrow(GroupService::notFound);
         queueReservations.beforeLockedLobbyChange(id);
+        if (!removeMember(group, member)) return null;
+        if (!actor.equals(target)) jdbc.queryForObject("SELECT pg_notify('rbgs_lobby_changes', ?)", Object.class,
+                GroupEventStreams.REMOVED_PREFIX + target);
+        return actor.equals(target) ? null : view(group, actor);
+    }
+
+    /** False when the last member left and the lobby was deleted. Caller holds the group lock. */
+    private boolean removeMember(PremadeGroup group, GroupMember member) {
+        UUID id = group.getId(), target = member.getAccountId();
         if (group.getCaptainId().equals(target)) {
             var successor = members.findFirstByGroupIdAndAccountIdNotOrderByJoinedOrderAsc(id, target);
             if (successor.isEmpty()) {
                 groups.delete(group);
                 groups.flush();
-                return null;
+                return false;
             }
             group.transfer(successor.get().getAccountId());
-        }
+        } else group.rosterChanged();
         members.delete(member);
         members.flush();
-        if (group.getRevision() == revision) group.rosterChanged();
-        if (!actor.equals(target)) jdbc.queryForObject("SELECT pg_notify('rbgs_lobby_changes', ?)", Object.class,
-                GroupEventStreams.REMOVED_PREFIX + target);
-        return actor.equals(target) ? null : view(group, actor);
+        return true;
+    }
+
+    List<UUID> expirationCandidates(Instant now) {
+        return jdbc.queryForList("""
+            SELECT id FROM rbgs.premade_groups WHERE last_match_activity_at <= ?
+            UNION SELECT group_id FROM rbgs.group_members WHERE browser_seen_at <= ?
+            """, UUID.class, Timestamp.from(now.minus(LOBBY_IDLE_LIMIT)), Timestamp.from(now.minus(BROWSER_GRACE)));
+    }
+
+    @Transactional
+    public void expire(UUID id, Instant now) {
+        queueTickets.lockCoordinator();
+        var group = groups.lockById(id).orElse(null);
+        if (group == null || queueReservations.hasFrozenRoster(id)) return;
+        if (!now.isBefore(group.getLastMatchActivityAt().plus(LOBBY_IDLE_LIMIT))) {
+            queueReservations.beforeLockedLobbyChange(id);
+            groups.delete(group);
+            groups.flush();
+            return;
+        }
+        // Lock and recheck presence so a reconnect committed before this query wins.
+        var expired = jdbc.queryForList("""
+            SELECT account_id FROM rbgs.group_members
+            WHERE group_id=? AND browser_seen_at<=? ORDER BY joined_order FOR UPDATE
+            """, UUID.class, id, Timestamp.from(now.minus(BROWSER_GRACE)));
+        if (expired.isEmpty()) return;
+        queueReservations.beforeLockedLobbyChange(id);
+        if (expired.contains(group.getCaptainId())) {
+            groups.delete(group);
+            groups.flush();
+            return;
+        }
+        for (UUID account : expired) {
+            var member = members.findById(account).orElseThrow();
+            removeMember(group, member);
+        }
     }
 
     @Transactional
@@ -296,7 +343,8 @@ public class GroupService {
         var outgoing = group.getCaptainId().equals(actor)
                 ? invitations.findByGroupIdAndExpiresAtAfterOrderByExpiresAt(group.getId(), Instant.now()).stream().map(this::invitation).toList()
                 : List.<Invitation>of();
-        return new Group(group.getId(), group.getCaptainId(), group.getRevision(), group.getRegion(), group.getJoinCode(), list, outgoing, false, blockers);
+        Instant idleClosesAt = queueReservations.hasFrozenRoster(group.getId()) ? null : group.getLastMatchActivityAt().plus(LOBBY_IDLE_LIMIT);
+        return new Group(group.getId(), group.getCaptainId(), group.getRevision(), group.getRegion(), group.getJoinCode(), list, outgoing, false, blockers, idleClosesAt);
     }
 
     private Member member(PremadeGroup group, GroupMember member, SeasonEntity season) {

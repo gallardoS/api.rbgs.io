@@ -2697,6 +2697,10 @@ components:
           description: Outgoing invitations visible only to the captain
           items: { $ref: '#/components/schemas/GroupInvitation' }
         queueReady: { type: boolean, const: false, description: Remains false until compatibility and queue admission are implemented }
+        idleClosesAt:
+          type: [string, 'null']
+          format: date-time
+          description: Lobby inactivity deadline. Null while the lobby roster is reserved for a match.
         blockers:
           type: array
           items: { type: string, enum: [TEN_PLAYERS_REQUIRED, MEMBERS_NOT_ELIGIBLE, FOREVER_COMPATIBILITY_UNVERIFIED, MATCHMAKING_UNAVAILABLE] }

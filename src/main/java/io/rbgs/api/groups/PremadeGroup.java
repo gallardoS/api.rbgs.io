@@ -1,6 +1,7 @@
 package io.rbgs.api.groups;
 
 import jakarta.persistence.*;
+import java.time.Instant;
 import java.util.UUID;
 import lombok.*;
 
@@ -15,6 +16,8 @@ public class PremadeGroup {
     @Column(nullable = false, updatable = false, length = 2) private String region;
     @Column(name = "join_code", length = 8) private String joinCode;
     @Column(name = "join_code_hash", length = 64) private String joinCodeHash;
+    @Column(name = "last_match_activity_at", nullable = false, updatable = false)
+    private Instant lastMatchActivityAt = Instant.now();
 
     public PremadeGroup(UUID captainId, String region) { this.id = UUID.randomUUID(); this.captainId = captainId; this.region = region; }
     public void rosterChanged() { revision++; }

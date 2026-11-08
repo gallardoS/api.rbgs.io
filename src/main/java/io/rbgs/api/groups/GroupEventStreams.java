@@ -20,6 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class GroupEventStreams {
     static final String REMOVED_PREFIX = "removed:";
     private final GroupEventAccess access;
+    private final GroupLifecycle lifecycle;
     private final String url, username, password;
     private final int maxConnections;
     private final Map<UUID, Set<Subscriber>> subscribers = new ConcurrentHashMap<>();
@@ -30,13 +31,18 @@ public class GroupEventStreams {
     private Thread listener;
     private int connectionCount;
 
-    public GroupEventStreams(GroupEventAccess access, @Value("${spring.datasource.url}") String url,
+    public GroupEventStreams(GroupEventAccess access, GroupLifecycle lifecycle, @Value("${spring.datasource.url}") String url,
             @Value("${spring.datasource.username}") String username, @Value("${spring.datasource.password}") String password,
             @Value("${rbgs.groups.sse.max-connections:1024}") int maxConnections) {
-        this.access = access; this.url = url; this.username = username; this.password = password; this.maxConnections = maxConnections;
+        this.access = access; this.lifecycle = lifecycle; this.url = url; this.username = username; this.password = password; this.maxConnections = maxConnections;
     }
 
-    synchronized SseEmitter open(UUID account, String sessionId) {
+    SseEmitter open(UUID account, String sessionId) {
+        lifecycle.browserSeen(account);
+        return register(account, sessionId);
+    }
+
+    private synchronized SseEmitter register(UUID account, String sessionId) {
         if (connectionCount >= maxConnections) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Lobby stream capacity reached");
         var clients = subscribers.computeIfAbsent(account, ignored -> ConcurrentHashMap.newKeySet());
         if (clients.size() >= 4) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many open lobby streams");
@@ -133,7 +139,10 @@ public class GroupEventStreams {
                     if (initial) emitter.send(SseEmitter.event().name("ready").reconnectTime(3000).data("{}"));
                     if (changed) emitter.send(SseEmitter.event().name("changed").data("{}"));
                     if (membershipRemoved) emitter.send(SseEmitter.event().name("removed").data("{}"));
-                    if (ping) emitter.send(SseEmitter.event().name("ping").data("{}"));
+                    if (ping) {
+                        emitter.send(SseEmitter.event().name("ping").data("{}"));
+                        lifecycle.browserSeen(account);
+                    }
                 }
             } catch (IOException | RuntimeException disconnected) { finish(); }
             finally {
@@ -148,6 +157,11 @@ public class GroupEventStreams {
                 var clients = subscribers.get(account);
                 if (clients != null) { clients.remove(this); if (clients.isEmpty()) subscribers.remove(account, clients); }
                 connectionCount--;
+            }
+            // A closed socket starts its own grace period. Other tabs can continue renewing presence.
+            if (running) {
+                try { lifecycle.browserSeen(account); }
+                catch (org.springframework.dao.DataAccessException unavailable) { /* The last heartbeat remains valid. */ }
             }
         }
     }
