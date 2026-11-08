@@ -10,6 +10,7 @@ import io.rbgs.api.emailnotifications.feedback.ResendFeedbackController;
 import io.rbgs.api.identity.Account;
 import io.rbgs.api.identity.AccountAuthorizationManager;
 import io.rbgs.api.identity.AccountService;
+import io.rbgs.api.ratings.LeaderboardController;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,7 +62,8 @@ public class SecurityConfiguration {
                         && (request.getRequestURI().equals("/api/v1/local/soloq/events")||request.getRequestURI().equals("/api/v1/local/premade/events"))).permitAll();
             }
             if (local) {
-                authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login").permitAll()
+                authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login",
+                        LeaderboardController.PATH, LeaderboardController.PROFILE_PATH).permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/api-client/approve").access(new AccountAuthorizationManager(accountServices, null, false));
             }
             authorize.requestMatchers(request -> request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC

@@ -18,15 +18,22 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest(properties = "rbgs.rating.enabled=true")
+@AutoConfigureMockMvc
+@ActiveProfiles("local")
 @Transactional
 class RatingResultsIntegrationTests {
     private static final String ISSUER = "https://rating-fixtures.example";
@@ -37,18 +44,22 @@ class RatingResultsIntegrationTests {
     @Autowired QueueProposalRepository proposals;
     @Autowired MatchRoomRepository rooms;
     @Autowired MatchRepository matches;
+    @Autowired MatchAssignmentRepository assignments;
     @Autowired MatchResultService results;
     @Autowired ConfirmedRatingStore confirmed;
     @Autowired RatingResults ratings;
     @Autowired JdbcTemplate db;
     @Autowired EntityManager entityManager;
+    @Autowired MockMvc mvc;
     private UUID season;
 
     @BeforeEach void setUp() {
-        season = seasons.saveAndFlush(new SeasonEntity("Rating fixture", SeasonKind.BETA, RatingSubjectType.ACCOUNT)).getId();
+        var fixture = new SeasonEntity("Rating fixture", SeasonKind.BETA, RatingSubjectType.ACCOUNT);
+        fixture.start(Instant.now().minusSeconds(60));
+        season = seasons.saveAndFlush(fixture).getId();
     }
 
-    @Test void lateResultAndCorrectionReplayInCreationOrderWithoutDoubleApplying() {
+    @Test void lateResultAndCorrectionReplayInCreationOrderWithoutDoubleApplying() throws Exception {
         var a = team();
         var b = team();
         var c = team();
@@ -89,13 +100,100 @@ class RatingResultsIntegrationTests {
         confirm(premade, "B");
         assertEquals(1484, rating(Queue.PREMADE, a).mmr());
         assertEquals(1501, rating(Queue.SOLO, a).mmr());
+        profile(a.getFirst().characterId()).andExpect(status().isOk())
+                .andExpect(jsonPath("$.solo.rating").value(rating(Queue.SOLO, a).visibleRating()))
+                .andExpect(jsonPath("$.solo.games").value(2))
+                .andExpect(jsonPath("$.solo.wins").value(1))
+                .andExpect(jsonPath("$.solo.losses").value(1))
+                .andExpect(jsonPath("$.solo.initialRating").value(0))
+                .andExpect(jsonPath("$.solo.progression[*].rating").value(org.hamcrest.Matchers.contains(0, 32)))
+                .andExpect(jsonPath("$.solo.peak").value(32))
+                .andExpect(jsonPath("$.premade.rating").value(0))
+                .andExpect(jsonPath("$.premade.games").value(1))
+                .andExpect(jsonPath("$.premade.progression[0].rating").value(0))
+                .andExpect(jsonPath("$.matches[?(@.queue == 'SOLO')].outcome")
+                        .value(org.hamcrest.Matchers.containsInAnyOrder("WIN", "LOSS")))
+                .andExpect(jsonPath("$.matches.length()").value(3));
     }
 
-    @Test void moderatorVoidReversesMovementsAndKeepsTheAuditTrail() {
+    @Test void leaderboardIncludesOnlyAppliedResultsAndUpdatesAfterModeratorVoid() throws Exception {
         var a = team();
         var b = team();
         var match = freeze(Queue.PREMADE, a, b);
+        UUID player = a.getFirst().characterId();
+        standings(Queue.PREMADE).andExpect(jsonPath("$.entries").isEmpty())
+                .andExpect(jsonPath("$.totalPages").value(0));
+        profile(player).andExpect(status().isNotFound());
         confirm(match, "A");
+        db.update("""
+                INSERT INTO rbgs.play_characters(account_id, namespace, wow_account_id, realm_id, character_id, region, name, realm, character_profile)
+                VALUES (?, 'profile-forever-eu', 1, 1, 1, 'EU', 'Player0', 'Fixture',
+                    '{"playable_race":{"name":"Orc"},"gender":{"type":"FEMALE"}}'::jsonb),
+                       (?, 'profile-classicann-eu', 2, 1, 2, 'EU', 'Player0', 'Fixture',
+                    '{"playable_race":{"name":"Human"},"gender":{"type":"MALE"}}'::jsonb)
+                """, a.getFirst().accountId(), b.getFirst().accountId());
+        standings(Queue.PREMADE)
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.entries.length()").value(20))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.entries[0].rating").value(32))
+                .andExpect(jsonPath("$.entries[0].wins").value(1))
+                .andExpect(jsonPath("$.entries[0].mmr").doesNotExist())
+                .andExpect(jsonPath("$.entries[0].accountId").doesNotExist())
+                .andExpect(jsonPath("$.entries[10].rating").value(0))
+                .andExpect(jsonPath("$.entries[10].losses").value(1));
+        standings(Queue.SOLO).andExpect(jsonPath("$.entries").isEmpty());
+        mvc.perform(get("/api/v1/local/leaderboard").param("season", season.toString()).param("queue", "PREMADE")
+                .param("search", "player0").param("limit", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries[0].name").value("Player0"))
+                .andExpect(jsonPath("$.entries[0].uniqueName").value(false))
+                .andExpect(jsonPath("$.entries[0].profileRef").value(player.toString()))
+                .andExpect(jsonPath("$.entries[0].characterClass").value("WARRIOR"))
+                .andExpect(jsonPath("$.entries[0].race").value("Orc"))
+                .andExpect(jsonPath("$.entries[0].gender").value("FEMALE"))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.nextOffset").value(1));
+        mvc.perform(get("/api/v1/local/leaderboard/profile")
+                .param("region", "eu").param("realm", "fixture").param("name", "player0"))
+                .andExpect(status().isNotFound());
+        db.update("UPDATE rbgs.character_identities SET name = ? WHERE id = ?", "Player Uno", a.get(1).characterId());
+        mvc.perform(get("/api/v1/local/leaderboard/profile")
+                .param("region", "eu").param("realm", "fixture").param("name", "player uno"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.season.id").value(season.toString()))
+                .andExpect(jsonPath("$.name").value("Player Uno"));
+        UUID otherCharacter = characters.saveAndFlush(
+                CharacterIdentity.declared(a.getFirst().accountId(), "UnratedAlt", "Fixture")).getId();
+        for (UUID reference : List.of(player, otherCharacter)) {
+            profile(reference).andExpect(status().isOk())
+                    .andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(jsonPath("$.season.subjectType").value("ACCOUNT"))
+                    .andExpect(jsonPath("$.name").value("Player0"))
+                    .andExpect(jsonPath("$.appearance.characterClass").value("WARRIOR"))
+                    .andExpect(jsonPath("$.appearance.region").value("EU"))
+                    .andExpect(jsonPath("$.appearance.race").value("Orc"))
+                    .andExpect(jsonPath("$.accountId").doesNotExist())
+                    .andExpect(jsonPath("$.solo").doesNotExist())
+                    .andExpect(jsonPath("$.premade.mmr").doesNotExist())
+                    .andExpect(jsonPath("$.premade.rating").value(32))
+                    .andExpect(jsonPath("$.premade.games").value(1))
+                    .andExpect(jsonPath("$.matches[0].character").value("Player0"))
+                    .andExpect(jsonPath("$.matches[0].outcome").value("WIN"))
+                    .andExpect(jsonPath("$.matches[0].rating").value(32))
+                    .andExpect(jsonPath("$.matches[0].matchId").doesNotExist());
+        }
+        mvc.perform(get("/api/v1/local/leaderboard").param("season", season.toString()).param("queue", "PREMADE")
+                .param("search", "player0").param("limit", "1").param("offset", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries[0].rating").value(0))
+                .andExpect(jsonPath("$.entries[0].race").doesNotExist())
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.nextOffset").doesNotExist())
+                .andExpect(jsonPath("$.entries[0].rank").value(org.hamcrest.Matchers.greaterThan(10)));
+        mvc.perform(get("/api/v1/local/leaderboard").param("season", season.toString()).param("queue", "PREMADE")
+                .param("search", "player0").param("limit", "1").param("offset", "2"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries").isEmpty())
+                .andExpect(jsonPath("$.totalPages").value(2));
+        mvc.perform(get("/api/v1/local/leaderboard").param("limit", "51")).andExpect(status().isBadRequest());
         String subject = "moderator-" + UUID.randomUUID();
         var moderator = accounts.upsert(ISSUER, subject, "Rating moderator");
         db.update("UPDATE rbgs.accounts SET account_role='MODERATOR' WHERE id=?", moderator.id());
@@ -114,6 +212,8 @@ class RatingResultsIntegrationTests {
         assertEquals(0, rating(Queue.PREMADE, a).priorCaptainAssignments());
         assertEquals(20, count("rating_movements", "replay_match_id", match.getId()));
         assertEquals(2, count("rating_result_revisions", "match_id", match.getId()));
+        standings(Queue.PREMADE).andExpect(jsonPath("$.entries").isEmpty());
+        profile(player).andExpect(status().isNotFound());
     }
 
     @Test void floorsAnIndividualMmrAndLeavesPendingAndControlledResultsUnrated() {
@@ -159,8 +259,21 @@ class RatingResultsIntegrationTests {
         var roomEntity = new MatchRoomEntity(room, season, captainA, captainB, now, "FOREVER");
         roomEntity.linkMatch(shared.getId());
         rooms.saveAndFlush(roomEntity);
+        for (var player : a) assignments.save(new MatchAssignmentEntity(shared, player.accountId(), player.characterId(), "A"));
+        for (var player : b) assignments.save(new MatchAssignmentEntity(shared, player.accountId(), player.characterId(), "B"));
+        assignments.flush();
         ratings.freeze(shared.getId(), room, season, queue, RatingSubjectType.ACCOUNT, proposal);
         return shared;
+    }
+
+    private org.springframework.test.web.servlet.ResultActions standings(Queue queue) throws Exception {
+        return mvc.perform(get("/api/v1/local/leaderboard").param("season", season.toString()).param("queue", queue.name()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seasonId").value(season.toString()));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions profile(UUID character) throws Exception {
+        return mvc.perform(get("/api/v1/local/leaderboard/profile")
+                .param("season", season.toString()).param("character", character.toString()));
     }
 
     private MatchEntity createMatch(UUID actor, MatchMode mode) {
