@@ -82,13 +82,13 @@ public class LeaderboardService {
     private record ProfileIdentity(UUID characterId, UUID accountId) {}
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public Page page(Queue queue, UUID seasonId, String search, int limit, int offset) {
+    public Page page(Queue queue, UUID seasonId, String search, int limit, int offset, boolean publicOnly) {
         var seasons = db.query("""
                 SELECT id, name, rating_subject_type FROM rbgs.seasons
-                WHERE started_at <= CURRENT_TIMESTAMP
+                WHERE started_at <= CURRENT_TIMESTAMP AND (NOT ? OR kind = 'PUBLIC')
                 ORDER BY started_at DESC, id ASC LIMIT 50
                 """, (row, index) -> new Season(row.getObject("id", UUID.class), row.getString("name"),
-                RatingSubjectType.valueOf(row.getString("rating_subject_type"))));
+                RatingSubjectType.valueOf(row.getString("rating_subject_type"))), publicOnly);
         if (seasonId == null && seasons.isEmpty()) return new Page(seasons, null, List.of(), null, 0);
         var season = seasonId == null ? seasons.getFirst() : seasons.stream().filter(item -> item.id().equals(seasonId))
                 .findFirst().orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Season unavailable"));
@@ -156,18 +156,18 @@ public class LeaderboardService {
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public Profile profile(UUID seasonId, UUID characterId) {
+    public Profile profile(UUID seasonId, UUID characterId, boolean publicOnly) {
         var owner = db.query("""
                 SELECT ch.account_id FROM rbgs.character_identities ch
                 JOIN rbgs.accounts account ON account.id = ch.account_id AND account.account_status = 'ACTIVE'
                 WHERE ch.id = ?
                 """, (row, index) -> row.getObject("account_id", UUID.class), characterId).stream().findFirst()
                 .orElseThrow(LeaderboardService::profileUnavailable);
-        return profile(seasonId, new ProfileIdentity(characterId, owner));
+        return profile(seasonId, new ProfileIdentity(characterId, owner), publicOnly);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public Profile namedProfile(UUID seasonId, String region, String realm, String name) {
+    public Profile namedProfile(UUID seasonId, String region, String realm, String name, boolean publicOnly) {
         var identities = db.query("""
                 SELECT ch.id, ch.account_id FROM rbgs.character_identities ch
                 JOIN rbgs.accounts account ON account.id = ch.account_id AND account.account_status = 'ACTIVE'
@@ -176,23 +176,31 @@ public class LeaderboardService {
                 """, (row, index) -> new ProfileIdentity(row.getObject("id", UUID.class), row.getObject("account_id", UUID.class)),
                 region, realm, name);
         if (identities.size() != 1) throw profileUnavailable();
-        return profile(seasonId, identities.getFirst());
+        return profile(seasonId, identities.getFirst(), publicOnly);
     }
 
-    private Profile profile(UUID seasonId, ProfileIdentity identity) {
+    private Profile profile(UUID seasonId, ProfileIdentity identity, boolean publicOnly) {
         var season = db.query("""
                 SELECT season.id, season.name, season.rating_subject_type FROM rbgs.seasons season
-                WHERE season.started_at <= CURRENT_TIMESTAMP
+                WHERE season.started_at <= CURRENT_TIMESTAMP AND (NOT ? OR season.kind = 'PUBLIC')
                   AND (season.id = ? OR (?::uuid IS NULL AND EXISTS (
                       SELECT 1 FROM rbgs.competitive_ratings rating
                       WHERE rating.season_id = season.id AND rating.subject_type = season.rating_subject_type
                         AND rating.account_id = ? AND rating.games_played > 0
                         AND rating.subject_id = CASE season.rating_subject_type WHEN 'ACCOUNT' THEN ? ELSE ? END
+                        AND (NOT ? OR EXISTS (
+                            SELECT 1 FROM rbgs.match_assignments a
+                            JOIN rbgs.match_competitive_context context ON context.match_id = a.match_id
+                            JOIN rbgs.matches m ON m.id = a.match_id
+                            WHERE a.character_id = ? AND context.season_id = season.id AND context.queue_type = rating.queue_type
+                              AND m.cancelled_at IS NULL AND m.verification_status IN ('VERIFIED', 'RESOLVED')
+                        ))
                   )))
                 ORDER BY season.started_at DESC, season.id ASC LIMIT 1
                 """, (row, index) -> new Season(row.getObject("id", UUID.class), row.getString("name"),
                 RatingSubjectType.valueOf(row.getString("rating_subject_type"))),
-                seasonId, seasonId, identity.accountId(), identity.accountId(), identity.characterId()).stream().findFirst()
+                publicOnly, seasonId, seasonId, identity.accountId(), identity.accountId(), identity.characterId(),
+                publicOnly, identity.characterId()).stream().findFirst()
                 .orElseThrow(LeaderboardService::profileUnavailable);
         var type = season.subjectType();
         UUID subject = type == RatingSubjectType.ACCOUNT ? identity.accountId() : identity.characterId();
@@ -224,7 +232,8 @@ public class LeaderboardService {
                 row.getObject("match_id", UUID.class), row.getObject("character_id", UUID.class), row.getLong("rating_order"),
                 row.getInt("visible_rating"), row.getInt("visible_before")),
                 season.id(), subject, type.name(), type.name(), subject, identity.accountId());
-        if (history.isEmpty()) throw profileUnavailable();
+        if (history.isEmpty() || publicOnly && history.stream().noneMatch(item -> item.characterId().equals(identity.characterId())))
+            throw profileUnavailable();
         var newest = history.getFirst();
         var appearance = db.queryForObject("SELECT ch.region, " + APPEARANCE_COLUMNS + """
                 FROM rbgs.character_identities ch

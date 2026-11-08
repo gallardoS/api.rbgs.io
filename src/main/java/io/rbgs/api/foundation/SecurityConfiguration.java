@@ -62,9 +62,14 @@ public class SecurityConfiguration {
                         && (request.getRequestURI().equals("/api/v1/local/soloq/events")||request.getRequestURI().equals("/api/v1/local/premade/events"))).permitAll();
             }
             if (local) {
-                authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login",
-                        LeaderboardController.PATH, LeaderboardController.PROFILE_PATH).permitAll()
+                authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/api-client", "/api/v1/auth/api-client/login").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/api-client/approve").access(new AccountAuthorizationManager(accountServices, null, false));
+                if (environment.getProperty("rbgs.rating.enabled", Boolean.class, false)) {
+                    authorize.requestMatchers(HttpMethod.GET, LeaderboardController.LOCAL_PATH, LeaderboardController.LOCAL_PROFILE_PATH).permitAll();
+                }
+            }
+            if (environment.getProperty("rbgs.leaderboard.public-enabled", Boolean.class, false)) {
+                authorize.requestMatchers(HttpMethod.GET, LeaderboardController.PATH, LeaderboardController.PROFILE_PATH).permitAll();
             }
             authorize.requestMatchers(request -> request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC
                     && (request.getRequestURI().equals("/api/v1/me/group-events")||request.getRequestURI().equals("/api/v1/me/solo-queue/events")

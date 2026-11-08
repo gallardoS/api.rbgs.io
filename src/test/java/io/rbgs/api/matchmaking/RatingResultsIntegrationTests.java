@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = "rbgs.rating.enabled=true")
+@SpringBootTest(properties = {"rbgs.rating.enabled=true", "rbgs.leaderboard.public-enabled=true"})
 @AutoConfigureMockMvc
 @ActiveProfiles("local")
 @Transactional
@@ -57,6 +57,36 @@ class RatingResultsIntegrationTests {
         var fixture = new SeasonEntity("Rating fixture", SeasonKind.BETA, RatingSubjectType.ACCOUNT);
         fixture.start(Instant.now().minusSeconds(60));
         season = seasons.saveAndFlush(fixture).getId();
+    }
+
+    @Test void publicStandingsExcludeBetaSeasonsAndUnplayedAliases() throws Exception {
+        UUID beta = season;
+        var betaTeam = team();
+        confirm(freeze(Queue.PREMADE, betaTeam, team()), "A");
+        mvc.perform(get("/api/v1/leaderboard")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.seasons").isEmpty()).andExpect(jsonPath("$.entries").isEmpty());
+        mvc.perform(get("/api/v1/leaderboard/profile").param("season", beta.toString())
+                .param("character", betaTeam.getFirst().characterId().toString())).andExpect(status().isNotFound());
+
+        var fixture = new SeasonEntity("Public rating fixture", SeasonKind.PUBLIC, RatingSubjectType.ACCOUNT);
+        fixture.start(Instant.now().minusSeconds(30));
+        season = seasons.saveAndFlush(fixture).getId();
+        var publicTeam = team();
+        var player = publicTeam.getFirst();
+        db.update("UPDATE rbgs.character_identities SET name = ? WHERE id = ?", "Public Player", player.characterId());
+        var alias = characters.saveAndFlush(CharacterIdentity.declared(player.accountId(), "Unplayed Player", "Fixture"));
+        confirm(freeze(Queue.PREMADE, publicTeam, team()), "A");
+        mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.seasons.length()").value(1))
+                .andExpect(jsonPath("$.seasonId").value(season.toString()))
+                .andExpect(jsonPath("$.entries.length()").value(20));
+        mvc.perform(get("/api/v1/leaderboard/profile").param("region", "eu").param("realm", "fixture")
+                .param("name", "public player")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.premade.rating").value(32))
+                .andExpect(jsonPath("$.premade.mmr").doesNotExist())
+                .andExpect(jsonPath("$.accountId").doesNotExist());
+        mvc.perform(get("/api/v1/leaderboard/profile").param("season", season.toString())
+                .param("character", alias.getId().toString())).andExpect(status().isNotFound());
     }
 
     @Test void lateResultAndCorrectionReplayInCreationOrderWithoutDoubleApplying() throws Exception {

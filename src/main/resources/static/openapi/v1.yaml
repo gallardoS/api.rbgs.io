@@ -6,6 +6,46 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /leaderboard:
+    get:
+      operationId: getPublicLeaderboard
+      summary: Read confirmed ratings for a public season and queue
+      description: Available when public standings are enabled. Only started public seasons are listed. Search filters the ranked rows without changing their positions.
+      security: []
+      parameters:
+        - { name: queue, in: query, schema: { type: string, enum: [SOLO, PREMADE], default: SOLO } }
+        - { name: season, in: query, schema: { type: string, format: uuid }, description: Defaults to the latest started season. }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Case-insensitive character name or realm search. }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
+      responses:
+        '200':
+          description: Current standings and season choices, with no-store caching
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocalLeaderboardPage' }
+        '400': { description: Invalid filter or page size }
+        '404': { description: Public season unavailable }
+  /leaderboard/profile:
+    get:
+      operationId: getPublicLeaderboardProfile
+      summary: Read a player's visible ratings and recent results for a season
+      description: Available when public standings are enabled. Profiles require a rated appearance by the requested character in a started public season. Supply either character and season, or region, realm and name with an optional season. Named lookups are case-insensitive and require a unique character identity. The season determines whether results belong to the account or to the character.
+      security: []
+      parameters:
+        - { name: season, in: query, schema: { type: string, format: uuid }, description: Required with character. Named lookups default to the latest started season with rated games for the subject. }
+        - { name: character, in: query, schema: { type: string, format: uuid }, description: The profileRef from a standings entry. }
+        - { name: region, in: query, schema: { type: string, minLength: 1, maxLength: 16 } }
+        - { name: realm, in: query, schema: { type: string, minLength: 1, maxLength: 100 } }
+        - { name: name, in: query, schema: { type: string, minLength: 1, maxLength: 100 } }
+      responses:
+        '200':
+          description: Visible ratings and recent rated matches, with no-store caching
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocalLeaderboardProfile' }
+        '400': { description: Missing or invalid profile parameters }
+        '404': { description: Profile unavailable or named identity ambiguous }
   /local/leaderboard:
     get:
       operationId: getLocalLeaderboard

@@ -38,6 +38,8 @@ class SecurityConfigurationTests {
                 .andExpect(status().is4xxClientError())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.valueOf("application/problem+json")))
                 .andExpect(jsonPath("$.status").isNumber());
+        mvc.perform(get("/api/v1/leaderboard")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/leaderboard/profile")).andExpect(status().isUnauthorized());
     }
 
     @Test
