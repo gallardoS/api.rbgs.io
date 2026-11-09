@@ -64,16 +64,15 @@ public class SoloQueueService {
             if(accept)return;
             throw new ResponseStatusException(HttpStatus.CONFLICT,"Proposal is no longer awaiting acceptance");
         }
-        if(room.getStatus().equals("PROPOSED")) {
-            var roster=tickets.findByProposalIdOrderByAccountId(id);
-            for(var member:roster) {
-                accounts.findForSelection(member.getAccountId()).orElseThrow();
-                if(!SoloQueueStore.matches(member,eligibility.inspect(member.getAccountId(),Instant.now()))) {
-                    rooms.cancelRoom(id,"ELIGIBILITY_CHANGED");return;
-                }
+        if(!accept) { rooms.respond(account,id,false);return; }
+        var roster=tickets.findByProposalIdOrderByAccountId(id);
+        for(var member:roster) {
+            accounts.findForSelection(member.getAccountId()).orElseThrow();
+            if(!SoloQueueStore.matches(member,eligibility.inspect(member.getAccountId(),Instant.now()))) {
+                rooms.cancelRoom(id,"ELIGIBILITY_CHANGED");return;
             }
         }
-        rooms.respond(account,id,accept);
+        rooms.respond(account,id,true);
         if(room.getStatus().equals("PREPARING")&&room.getMatchId()==null) {
             var expected=proposals.findById(id).orElseThrow().proposal();
             if(PreseasonQueue.isPreview(expected))return;

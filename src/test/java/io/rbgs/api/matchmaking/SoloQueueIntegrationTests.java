@@ -12,8 +12,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -196,10 +198,17 @@ class SoloQueueIntegrationTests {
         assertEquals("CANCELLED",roomService.own(candidates.getFirst().accountId(),room).status());
         for (var c:candidates) assertFalse(tickets.hasReservation(c.accountId()));
     }
-    @Test void declineReleasesAllAccountsAndPreservesRoomHistory() {
+    @Test void onlyAPendingParticipantCanDeclineAndReleaseTheRoom() {
         enqueue(); var proposal=store.propose(Instant.now(),(a,b)->true).orElseThrow();
         var c=candidates.getFirst();
-        roomService.respondAt(c.accountId(),proposal.getId(),false,Instant.now());
+        roomService.respondAt(c.accountId(),proposal.getId(),true,Instant.now());
+        var accepted=roomService.own(c.accountId(),proposal.getId());
+        var conflict=assertThrows(ResponseStatusException.class,
+                () -> roomService.respondAt(c.accountId(),proposal.getId(),false,Instant.now()));
+        assertEquals(HttpStatus.CONFLICT,conflict.getStatusCode());
+        assertEquals(accepted,roomService.own(c.accountId(),proposal.getId()));
+        for (var candidate:candidates) assertTrue(tickets.hasReservation(candidate.accountId()));
+        roomService.respondAt(candidates.get(1).accountId(),proposal.getId(),false,Instant.now());
         var room=roomService.own(c.accountId(),proposal.getId());
         assertEquals("CANCELLED",room.status()); assertEquals("PARTICIPANT_DECLINED",room.cancellationReason());
         assertEquals(20,room.teamA().size()+room.teamB().size());

@@ -352,7 +352,7 @@ paths:
         '401': { description: Authentication required }
         '403': { description: Missing CSRF }
         '404': { description: No accessible real room }
-        '409': { description: Room is no longer proposed or the game handoff failed validation }
+        '409': { description: "Room is no longer proposed, the player already accepted, or the game handoff failed validation" }
   /me/premade-queue/events:
     get:
       operationId: streamPremadeQueue
@@ -685,7 +685,7 @@ paths:
         '401': { description: Sign in required }
         '403': { description: Account or CSRF unavailable }
         '404': { description: Room unavailable to this account }
-        '409': { description: Proposal no longer awaiting acceptance }
+        '409': { description: Proposal no longer awaiting acceptance or the player already accepted }
   /me/solo-queue/{ticket}:
     delete:
       operationId: cancelOwnSoloQueueTicket

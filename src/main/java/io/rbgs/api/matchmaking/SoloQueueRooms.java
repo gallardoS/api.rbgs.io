@@ -6,8 +6,10 @@ import io.rbgs.api.ratings.RatingResults;
 import java.time.Instant;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
@@ -57,7 +59,15 @@ public class SoloQueueRooms {
         var room=rooms.findById(id).orElseThrow();
         if (room.due(now)) { cancel(room,roster,expirationReason(room)); return; }
         if (!Set.of("PROPOSED","PREPARING").contains(room.getStatus())) return;
-        if (!accept) { cancel(room,roster,"PARTICIPANT_DECLINED"); return; }
+        if (!accept) {
+            // The SoloQ lab also uses this action to end an already prepared simulation.
+            boolean endingSimulation = room.getSource().equals("SIMULATION") && room.getStatus().equals("PREPARING");
+            if (ticket.getAcceptedAt() != null && !endingSimulation) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "You have already accepted this proposal");
+            }
+            cancel(room,roster,"PARTICIPANT_DECLINED");
+            return;
+        }
         if (!room.getStatus().equals("PROPOSED") || ticket.getAcceptedAt()!=null) return;
         if (!accounts.findForSelection(account).orElseThrow().getStatus().equals("ACTIVE")) {
             cancel(room,roster,"ACCOUNT_UNAVAILABLE"); return;
