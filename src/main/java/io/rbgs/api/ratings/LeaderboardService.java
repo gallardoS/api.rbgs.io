@@ -75,7 +75,7 @@ public class LeaderboardService {
                               int initialRating, List<RatingPoint> progression) {}
     public record Appearance(String characterClass, String race, String gender, String region) {}
     public record ProfileMatch(Queue queue, String character, String realm, Instant playedAt, String outcome, int rating) {}
-    public record Profile(Season season, String name, String realm, Appearance appearance,
+    public record Profile(Season season, List<Season> seasons, String name, String realm, Appearance appearance,
                           QueueRating solo, QueueRating premade, List<ProfileMatch> matches) {}
     private record Participation(ProfileMatch match, UUID matchId, UUID characterId, long ratingOrder,
                                  int rating, int before) {}
@@ -180,27 +180,42 @@ public class LeaderboardService {
     }
 
     private Profile profile(UUID seasonId, ProfileIdentity identity, boolean publicOnly) {
-        var season = db.query("""
-                SELECT season.id, season.name, season.rating_subject_type FROM rbgs.seasons season
-                WHERE season.started_at <= CURRENT_TIMESTAMP AND (NOT ? OR season.kind = 'PUBLIC')
-                  AND (season.id = ? OR (?::uuid IS NULL AND EXISTS (
-                      SELECT 1 FROM rbgs.competitive_ratings rating
-                      WHERE rating.season_id = season.id AND rating.subject_type = season.rating_subject_type
-                        AND rating.account_id = ? AND rating.games_played > 0
-                        AND rating.subject_id = CASE season.rating_subject_type WHEN 'ACCOUNT' THEN ? ELSE ? END
-                        AND (NOT ? OR EXISTS (
-                            SELECT 1 FROM rbgs.match_assignments a
-                            JOIN rbgs.match_competitive_context context ON context.match_id = a.match_id
-                            JOIN rbgs.matches m ON m.id = a.match_id
-                            WHERE a.character_id = ? AND context.season_id = season.id AND context.queue_type = rating.queue_type
-                              AND m.cancelled_at IS NULL AND m.verification_status IN ('VERIFIED', 'RESOLVED')
-                        ))
-                  )))
-                ORDER BY season.started_at DESC, season.id ASC LIMIT 1
+        var availableSeasons = db.query("""
+                WITH available AS (
+                    SELECT s.id, s.name, s.rating_subject_type,
+                           row_number() OVER (ORDER BY s.started_at DESC, s.id) AS position
+                    FROM rbgs.seasons s
+                    WHERE s.started_at <= CURRENT_TIMESTAMP AND (NOT ? OR s.kind = 'PUBLIC')
+                      AND EXISTS (
+                          SELECT 1 FROM rbgs.competitive_ratings rating
+                          WHERE rating.season_id = s.id AND rating.subject_type = s.rating_subject_type
+                            AND rating.account_id = ? AND rating.games_played > 0
+                            AND rating.subject_id = CASE s.rating_subject_type WHEN 'ACCOUNT' THEN ? ELSE ? END
+                            AND (NOT ? OR EXISTS (
+                                SELECT 1 FROM rbgs.match_assignments a
+                                JOIN rbgs.match_competitive_context c ON c.match_id = a.match_id
+                                JOIN rbgs.matches m ON m.id = a.match_id
+                                CROSS JOIN LATERAL (
+                                    SELECT result_version, outcome FROM rbgs.rating_result_revisions
+                                    WHERE match_id = c.match_id ORDER BY result_version DESC LIMIT 1
+                                ) result
+                                JOIN rbgs.rating_movements movement ON movement.replay_match_id = c.match_id
+                                    AND movement.match_id = c.match_id AND movement.replay_result_version = result.result_version
+                                    AND movement.subject_id = rating.subject_id AND movement.team = a.assigned_team
+                                WHERE a.character_id = ? AND a.account_id = rating.account_id
+                                  AND c.season_id = s.id AND c.queue_type = rating.queue_type
+                                  AND m.cancelled_at IS NULL AND m.verification_status IN ('VERIFIED', 'RESOLVED')
+                                  AND result.outcome = CASE m.outcome_kind WHEN 'DRAW' THEN 'DRAW' WHEN 'WIN' THEN m.winning_team END
+                            ))
+                      )
+                )
+                SELECT id, name, rating_subject_type FROM available
+                WHERE position <= 50 OR id = ? ORDER BY position
                 """, (row, index) -> new Season(row.getObject("id", UUID.class), row.getString("name"),
                 RatingSubjectType.valueOf(row.getString("rating_subject_type"))),
-                publicOnly, seasonId, seasonId, identity.accountId(), identity.accountId(), identity.characterId(),
-                publicOnly, identity.characterId()).stream().findFirst()
+                publicOnly, identity.accountId(), identity.accountId(), identity.characterId(),
+                publicOnly, identity.characterId(), seasonId);
+        var season = availableSeasons.stream().filter(option -> seasonId == null || option.id().equals(seasonId)).findFirst()
                 .orElseThrow(LeaderboardService::profileUnavailable);
         var type = season.subjectType();
         UUID subject = type == RatingSubjectType.ACCOUNT ? identity.accountId() : identity.characterId();
@@ -247,7 +262,7 @@ public class LeaderboardService {
         for (var item : history) {
             if (counts.merge(item.match().queue(), 1, Integer::sum) <= PROFILE_HISTORY_LIMIT) recent.add(item.match());
         }
-        return new Profile(season, newest.match().character(), newest.match().realm(), appearance,
+        return new Profile(season, availableSeasons, newest.match().character(), newest.match().realm(), appearance,
                 rating(history, Queue.SOLO), rating(history, Queue.PREMADE), recent);
     }
 

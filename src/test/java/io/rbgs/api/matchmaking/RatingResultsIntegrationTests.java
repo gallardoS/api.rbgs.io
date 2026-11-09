@@ -146,6 +146,54 @@ class RatingResultsIntegrationTests {
                 .andExpect(jsonPath("$.matches.length()").value(3));
     }
 
+    @Test void seasonSwitcherKeepsArchivedAccountResultsSeparateFromCurrentCharacterResults() throws Exception {
+        UUID archived = season;
+        var a = team();
+        var b = team();
+        UUID player = a.getFirst().characterId();
+        var archivedWin = freeze(Queue.PREMADE, a, b);
+        var archivedLoss = freeze(Queue.PREMADE, a, b);
+        confirm(archivedWin, "A");
+        confirm(archivedLoss, "B");
+
+        var current = new SeasonEntity("Character season fixture", SeasonKind.PUBLIC, RatingSubjectType.CHARACTER);
+        current.start(Instant.now().minusSeconds(30));
+        season = seasons.saveAndFlush(current).getId();
+        var currentA = selectForCharacterSeason(a);
+        var currentB = selectForCharacterSeason(b);
+        confirm(freeze(Queue.SOLO, currentA, currentB, RatingSubjectType.CHARACTER), "A");
+
+        profile(player).andExpect(status().isOk())
+                .andExpect(jsonPath("$.season.subjectType").value("CHARACTER"))
+                .andExpect(jsonPath("$.seasons[0].id").value(season.toString()))
+                .andExpect(jsonPath("$.seasons[1].id").value(archived.toString()))
+                .andExpect(jsonPath("$.seasons[1].subjectType").value("ACCOUNT"))
+                .andExpect(jsonPath("$.solo.rating").value(32))
+                .andExpect(jsonPath("$.premade").doesNotExist());
+        mvc.perform(get("/api/v1/leaderboard/profile").param("season", season.toString())
+                .param("character", player.toString())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.seasons.length()").value(1));
+        profile(archived, player).andExpect(status().isOk())
+                .andExpect(jsonPath("$.season.id").value(archived.toString()))
+                .andExpect(jsonPath("$.premade.games").value(2))
+                .andExpect(jsonPath("$.solo").doesNotExist());
+        standings(archived, Queue.PREMADE).andExpect(jsonPath("$.entries[0].wins").value(1));
+
+        var result = results.decide(moderator(), archivedWin.getId(), new MatchResultService.ModeratorDecision(
+                archivedWin.getResultVersion(), "VOID", null, "Fixture archived result voided", List.of()));
+        assertEquals("VOIDED", result.status());
+        profile(archived, player).andExpect(status().isOk())
+                .andExpect(jsonPath("$.premade.games").value(1))
+                .andExpect(jsonPath("$.premade.rating").value(0))
+                .andExpect(jsonPath("$.matches[0].outcome").value("LOSS"));
+        standings(archived, Queue.PREMADE).andExpect(jsonPath("$.entries[10].rating").value(0))
+                .andExpect(jsonPath("$.entries[10].losses").value(1));
+        profile(player).andExpect(status().isOk())
+                .andExpect(jsonPath("$.solo.rating").value(32))
+                .andExpect(jsonPath("$.matches[0].outcome").value("WIN"));
+        standings(Queue.SOLO).andExpect(jsonPath("$.entries[0].rating").value(32));
+    }
+
     @Test void leaderboardIncludesOnlyAppliedResultsAndUpdatesAfterModeratorVoid() throws Exception {
         var a = team();
         var b = team();
@@ -224,16 +272,7 @@ class RatingResultsIntegrationTests {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.entries").isEmpty())
                 .andExpect(jsonPath("$.totalPages").value(2));
         mvc.perform(get("/api/v1/local/leaderboard").param("limit", "51")).andExpect(status().isBadRequest());
-        String subject = "moderator-" + UUID.randomUUID();
-        var moderator = accounts.upsert(ISSUER, subject, "Rating moderator");
-        db.update("UPDATE rbgs.accounts SET account_role='MODERATOR' WHERE id=?", moderator.id());
-        entityManager.clear();
-        var now = Instant.now();
-        var token = new OidcIdToken("fixture", now, now.plusSeconds(60), Map.of("iss", ISSUER, "sub", subject));
-        var authorities = List.of(new SimpleGrantedAuthority("ROLE_MODERATOR"));
-        var auth = new OAuth2AuthenticationToken(new DefaultOidcUser(authorities, token), authorities, "battle-net");
-
-        var result = results.decide(auth, match.getId(), new MatchResultService.ModeratorDecision(
+        var result = results.decide(moderator(), match.getId(), new MatchResultService.ModeratorDecision(
                 match.getResultVersion(), "VOID", null, "Fixture result voided", List.of()));
         assertEquals("VOIDED", result.status());
         assertFalse(result.ratingApplied());
@@ -280,6 +319,10 @@ class RatingResultsIntegrationTests {
     }
 
     private MatchEntity freeze(Queue queue, List<SoloQueueCandidate> a, List<SoloQueueCandidate> b) {
+        return freeze(queue, a, b, RatingSubjectType.ACCOUNT);
+    }
+
+    private MatchEntity freeze(Queue queue, List<SoloQueueCandidate> a, List<SoloQueueCandidate> b, RatingSubjectType type) {
         var now = Instant.now();
         UUID captainA = a.getFirst().accountId();
         UUID captainB = b.getFirst().accountId();
@@ -292,18 +335,47 @@ class RatingResultsIntegrationTests {
         for (var player : a) assignments.save(new MatchAssignmentEntity(shared, player.accountId(), player.characterId(), "A"));
         for (var player : b) assignments.save(new MatchAssignmentEntity(shared, player.accountId(), player.characterId(), "B"));
         assignments.flush();
-        ratings.freeze(shared.getId(), room, season, queue, RatingSubjectType.ACCOUNT, proposal);
+        ratings.freeze(shared.getId(), room, season, queue, type, proposal);
         return shared;
     }
 
     private org.springframework.test.web.servlet.ResultActions standings(Queue queue) throws Exception {
-        return mvc.perform(get("/api/v1/local/leaderboard").param("season", season.toString()).param("queue", queue.name()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.seasonId").value(season.toString()));
+        return standings(season, queue);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions standings(UUID seasonId, Queue queue) throws Exception {
+        return mvc.perform(get("/api/v1/local/leaderboard").param("season", seasonId.toString()).param("queue", queue.name()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seasonId").value(seasonId.toString()));
     }
 
     private org.springframework.test.web.servlet.ResultActions profile(UUID character) throws Exception {
+        return profile(season, character);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions profile(UUID seasonId, UUID character) throws Exception {
         return mvc.perform(get("/api/v1/local/leaderboard/profile")
-                .param("season", season.toString()).param("character", character.toString()));
+                .param("season", seasonId.toString()).param("character", character.toString()));
+    }
+
+    private List<SoloQueueCandidate> selectForCharacterSeason(List<SoloQueueCandidate> team) {
+        return team.stream().map(player -> {
+            var selection = new SeasonSelection(player.accountId(), season);
+            selection.choose(player.characterId(), RatingSubjectType.CHARACTER, player.role(), false);
+            confirmed.initializeSelection(selections.saveAndFlush(selection).getId());
+            return new SoloQueueCandidate(player.accountId(), player.characterId(), season, player.region(), player.ruleset(),
+                    player.groupingKey(), player.role(), false, Instant.now(), 1500, player.characterClass(), 0);
+        }).toList();
+    }
+
+    private OAuth2AuthenticationToken moderator() {
+        String subject = "moderator-" + UUID.randomUUID();
+        var moderator = accounts.upsert(ISSUER, subject, "Rating moderator");
+        db.update("UPDATE rbgs.accounts SET account_role='MODERATOR' WHERE id=?", moderator.id());
+        entityManager.clear();
+        var now = Instant.now();
+        var token = new OidcIdToken("fixture", now, now.plusSeconds(60), Map.of("iss", ISSUER, "sub", subject));
+        var authorities = List.of(new SimpleGrantedAuthority("ROLE_MODERATOR"));
+        return new OAuth2AuthenticationToken(new DefaultOidcUser(authorities, token), authorities, "battle-net");
     }
 
     private MatchEntity createMatch(UUID actor, MatchMode mode) {

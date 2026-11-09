@@ -2417,9 +2417,15 @@ components:
               rating: { type: integer, minimum: 0 }
     LocalLeaderboardProfile:
       type: object
-      required: [season, name, realm, appearance, solo, premade, matches]
+      required: [season, seasons, name, realm, appearance, solo, premade, matches]
       properties:
         season: { $ref: '#/components/schemas/LocalLeaderboardSeason' }
+        seasons:
+          type: array
+          minItems: 1
+          maxItems: 51
+          description: Up to 50 recent seasons with rated history for this profile, plus the requested season when older.
+          items: { $ref: '#/components/schemas/LocalLeaderboardSeason' }
         name: { type: string }
         realm: { type: string }
         appearance:
