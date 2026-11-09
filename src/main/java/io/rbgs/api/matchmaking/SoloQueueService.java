@@ -76,6 +76,7 @@ public class SoloQueueService {
         rooms.respond(account,id,accept);
         if(room.getStatus().equals("PREPARING")&&room.getMatchId()==null) {
             var expected=proposals.findById(id).orElseThrow().proposal();
+            if(PreseasonQueue.isPreview(expected))return;
             UUID match=game.createMatch(expected,Instant.now());
             var shared=matches.findById(match).filter(m->m.getMode()==MatchMode.MATCHMADE&&m.getEvidencePolicy()==MatchEvidencePolicy.FULL_ROSTER
                     &&m.getCancelledAt()==null&&!Set.of("DARKSPEAR_DIAGNOSTIC","TBC_ANNIVERSARY_WSG_TEST").contains(m.getProfile()))

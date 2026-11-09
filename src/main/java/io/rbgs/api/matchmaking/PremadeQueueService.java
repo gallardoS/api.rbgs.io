@@ -123,6 +123,7 @@ public class PremadeQueueService {
         rooms.respond(account,id,true);
         if(room.getStatus().equals("PREPARING")&&room.getMatchId()==null) {
             var expected=proposals.findById(id).orElseThrow().proposal();
+            if(PreseasonQueue.isPreview(expected))return;
             UUID match=game.createMatch(expected,room.getPreparationDeadline().minusSeconds(600));
             var shared=matches.findById(match).filter(m->m.getMode()==io.rbgs.api.matches.MatchMode.MATCHMADE
                     &&m.getEvidencePolicy()==io.rbgs.api.matches.MatchEvidencePolicy.FULL_ROSTER&&m.getCancelledAt()==null

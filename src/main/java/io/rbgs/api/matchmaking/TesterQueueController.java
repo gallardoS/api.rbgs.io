@@ -44,7 +44,7 @@ class TesterQueueController {
         var room = new SoloQueueRooms.Room(UUID.randomUUID(), "SIMULATION", "PROPOSED",
                 now.plusSeconds(60), null, null, 0,
                 members(match.teamA(), match.captainA(), actor.id(), candidates),
-                members(match.teamB(), match.captainB(), actor.id(), candidates));
+                members(match.teamB(), match.captainB(), actor.id(), candidates), false);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of("serverTime", now, "room", room));
     }
 

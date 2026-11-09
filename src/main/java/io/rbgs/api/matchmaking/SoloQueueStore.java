@@ -76,7 +76,7 @@ public class SoloQueueStore {
         return propose(clock,(ruleset,a,b)->verifiedOpposition.test(a,b),"SIMULATION");
     }
     @Transactional
-    Optional<QueueProposal> proposeReal() { return propose(Instant::now,game::canOppose,"FOREVER"); }
+    Optional<QueueProposal> proposeReal() { return propose(Instant::now,PreseasonQueue.opposition(game),"FOREVER"); }
     private Optional<QueueProposal> propose(java.util.function.Supplier<Instant> clock,SoloQueueMatcher.GroupingPolicy opposition,String source) {
         long start = System.nanoTime();
         tickets.lockCoordinator();

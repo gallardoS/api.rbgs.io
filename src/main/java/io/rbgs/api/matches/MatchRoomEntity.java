@@ -37,8 +37,11 @@ public class MatchRoomEntity {
     }
     public void linkMatch(UUID id) { if(matchId!=null&&!matchId.equals(id))throw new IllegalStateException("Room already linked");matchId=java.util.Objects.requireNonNull(id); }
     public void preparing(Instant now) {
+        preparing(now, 600);
+    }
+    public void preparing(Instant now, long seconds) {
         if (!status.equals("PROPOSED") || !now.isBefore(acceptanceDeadline)) throw new IllegalStateException("Acceptance deadline passed");
-        status="PREPARING"; preparationDeadline=now.plusSeconds(600);
+        status="PREPARING"; preparationDeadline=now.plusSeconds(seconds);
     }
     public void acceptanceChanged() { acceptedCount++; }
 

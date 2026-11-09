@@ -86,7 +86,7 @@ public class PremadeQueueStore {
     @Transactional
     Optional<QueueProposal> proposeReal() {
         tickets.lockCoordinator();
-        return propose(Instant.now(),game::canOppose,wait->Math.min(600,100+50*(wait.toSeconds()/60)),"FOREVER");
+        return propose(Instant.now(),PreseasonQueue.opposition(game),wait->Math.min(600,100+50*(wait.toSeconds()/60)),"FOREVER");
     }
 
     @Transactional

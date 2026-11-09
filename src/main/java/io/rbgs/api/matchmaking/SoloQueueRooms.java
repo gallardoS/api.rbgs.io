@@ -22,7 +22,7 @@ public class SoloQueueRooms {
 
     public record Member(UUID accountId,String name,String role,boolean captain,boolean accepted) { }
     public record Room(UUID id,String source,String status,Instant acceptanceDeadline,Instant preparationDeadline,
-            String cancellationReason,long version,List<Member> teamA,List<Member> teamB) { }
+            String cancellationReason,long version,List<Member> teamA,List<Member> teamB,boolean preseasonPreview) { }
 
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Room own(UUID account,UUID id) {
@@ -32,7 +32,7 @@ public class SoloQueueRooms {
         var proposal=proposals.findById(id).orElseThrow().proposal();
         return new Room(id,room.getSource(),room.getStatus(),room.getAcceptanceDeadline(),room.getPreparationDeadline(),
                 room.getCancellationReason(),room.getVersion(),members(proposal.teamA(),proposal.captainA(),roster,room.getSource()),
-                members(proposal.teamB(),proposal.captainB(),roster,room.getSource()));
+                members(proposal.teamB(),proposal.captainB(),roster,room.getSource()),PreseasonQueue.isPreview(proposal));
     }
     private List<Member> members(List<SoloQueueCandidate> team,UUID captain,List<QueueTicket> tickets,String source) {
         return team.stream().map(c->new Member(c.accountId(),source.equals("FOREVER")?characters.findById(c.characterId())
@@ -55,7 +55,7 @@ public class SoloQueueRooms {
         var roster=tickets.findByProposalIdOrderByAccountId(id);
         var ticket=roster.stream().filter(t->t.getAccountId().equals(account)).findFirst().orElseThrow();
         var room=rooms.findById(id).orElseThrow();
-        if (room.due(now)) { cancel(room,roster,"DEADLINE_EXPIRED"); return; }
+        if (room.due(now)) { cancel(room,roster,expirationReason(room)); return; }
         if (!Set.of("PROPOSED","PREPARING").contains(room.getStatus())) return;
         if (!accept) { cancel(room,roster,"PARTICIPANT_DECLINED"); return; }
         if (!room.getStatus().equals("PROPOSED") || ticket.getAcceptedAt()!=null) return;
@@ -66,7 +66,10 @@ public class SoloQueueRooms {
         // Force a dirty field rather than assigning JPA's managed optimistic version.
         room.acceptanceChanged();
         if (roster.size()!=20) throw new IllegalStateException("A room requires exactly twenty participants");
-        if (roster.stream().allMatch(t->t.getAcceptedAt()!=null)) room.preparing(now);
+        if (roster.stream().allMatch(t->t.getAcceptedAt()!=null)) {
+            if (isPreview(room)) room.preparing(now,60);
+            else room.preparing(now);
+        }
     }
     @Transactional
     public void expire(Instant now) {
@@ -95,6 +98,15 @@ public class SoloQueueRooms {
     public void expireReal(Instant now) {
         tickets.lockCoordinator();
         for(var room:rooms.findBySourceAndStatusIn("FOREVER",List.of("PROPOSED","PREPARING")))
-            if(room.due(now))cancel(room,tickets.findByProposalIdOrderByAccountId(room.getId()),"DEADLINE_EXPIRED");
+            if(room.due(now))cancel(room,tickets.findByProposalIdOrderByAccountId(room.getId()),expirationReason(room));
+    }
+
+    private boolean isPreview(MatchRoomEntity room) {
+        return room.getSource().equals("FOREVER") && PreseasonQueue.SEASON_ID.equals(room.getSeasonId())
+                && PreseasonQueue.isPreview(proposals.findById(room.getId()).orElseThrow().proposal());
+    }
+
+    private String expirationReason(MatchRoomEntity room) {
+        return room.getStatus().equals("PREPARING") && isPreview(room) ? PreseasonQueue.COMPLETED : "DEADLINE_EXPIRED";
     }
 }

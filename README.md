@@ -12,7 +12,7 @@ Java 21, Spring Boot 4.1, Spring MVC/Security, Spring Data JPA, PostgreSQL 17, F
 - `seasons`: season and rating-subject persistence.
 - `foundation`: security, CSRF and health checks.
 
-Groups support private premade lobbies, targeted invitations, shared lobby codes and version-bound preparation. Matchmaking, ranked matches and ratings remain unavailable. Evidence supports moderator-declared Darkspear tests, immutable reports and durable receipts. Flyway owns schema changes; Hibernate validates the schema and Open Session in View is disabled.
+Groups support private premade lobbies, targeted invitations, shared lobby codes and version-bound preparation. The Preseason preview lets Forever EU players rehearse matchmaking and acceptance while wargames are pending. Flyway owns schema changes; Hibernate validates the schema and Open Session in View is disabled.
 
 ## Local development
 
@@ -43,6 +43,8 @@ Integration tests use the local PostgreSQL configured through `.env` and `RBGS_D
 | `RBGS_API_PORT` | API port; falls back to `PORT`, then `8080`. |
 | `RBGS_MANAGEMENT_PORT`, `RBGS_MANAGEMENT_ADDRESS` | Actuator listener; defaults to `8081`, `127.0.0.1`. |
 | `RBGS_CONTROLLED_CAPTURE_ENABLED` | Controlled Darkspear capture tests; default `false`. Requires an active moderator to create assignments. Evidence enters review; no rating. |
+
+To open the Preseason queue preview, set `RBGS_PLAY_SEASON_ID=45b0ddbd-7bae-46f3-acb3-56b8f2adfa85` and `RBGS_PLAY_PRESEASON_PREVIEW=true` together. Startup creates the public, account-based Preseason once. SoloQ and Premade use the normal acceptance flow and a one-minute rehearsal room, then release the players to queue again. Rehearsal rooms generate no game assignments or rating changes. Keep the same season ID when switching to a verified game gateway and turn off the preview flag. The Season 1 announcement and email launch switch are independent.
 
 ## HTTP API and security
 

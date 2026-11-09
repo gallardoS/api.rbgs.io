@@ -14,7 +14,6 @@ class SoloQueueWorker {
     private final QueueTicketRepository tickets;
     @Scheduled(fixedDelayString="${rbgs.soloq.cycle-ms:2000}")
     void cycle() {
-        // No configuration bypass: admission still requires verified gateway data and a real handoff.
         rooms.expireReal(Instant.now());
         if(!tickets.findBySourceAndStateOrderByEnteredAtAscAccountIdAsc("FOREVER","QUEUED").isEmpty())store.proposeReal();
     }

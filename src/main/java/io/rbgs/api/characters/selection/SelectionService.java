@@ -25,6 +25,7 @@ public class SelectionService {
     private final ForeverOwnershipVerifier verifier;
     private final DeviceService devices;
     private final io.rbgs.api.matchmaking.ConfirmedRatingStore ratings;
+    private final io.rbgs.api.matchmaking.PreseasonQueue preseason;
 
     @Transactional(readOnly = true)
     public PlayContext context(Authentication authentication) {
@@ -35,7 +36,7 @@ public class SelectionService {
         var selection = selections.findByAccountIdAndSeasonId(accountId, seasonId).orElse(null);
         return new PlayContext(new PlayContext.Season(season.getId(), season.getName(), season.getKind(),
                 season.getRatingSubjectType(), season.getVersion()), selection == null ? null : view(selection, season),
-                "UNVERIFIED", false);
+                "UNVERIFIED", preseason.active(season));
     }
 
     @Transactional
@@ -76,8 +77,11 @@ public class SelectionService {
             character = selection == null ? null : identities.findById(selection.getCharacterId()).orElseThrow();
             if (character == null || character.getSource() != CharacterIdentity.Source.DECLARED
                     || !character.getName().equals(declaration.name().strip()) || !character.getRealm().equals(declaration.realm().strip())) {
-                character = identities.saveAndFlush(CharacterIdentity.declared(accountId,
-                        declaration.name().strip(), declaration.realm().strip()));
+                String name = declaration.name().strip();
+                String realm = declaration.realm().strip();
+                character = identities.findFirstByAccountIdAndSourceAndProductAndRegionAndNameAndRealmOrderById(
+                        accountId, CharacterIdentity.Source.DECLARED, "WOW_FOREVER", "EU", name, realm)
+                        .orElseGet(() -> identities.saveAndFlush(CharacterIdentity.declared(accountId, name, realm)));
             }
         } else {
             if (request.characterId() == null || request.declaration() != null) {

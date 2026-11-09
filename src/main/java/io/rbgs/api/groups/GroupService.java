@@ -38,6 +38,7 @@ public class GroupService {
     private final MatchAssignmentRepository assignments;
     private final io.rbgs.api.matchmaking.QueueTicketRepository queueTickets;
     private final io.rbgs.api.matchmaking.PremadeLobbyReservations queueReservations;
+    private final io.rbgs.api.matchmaking.PreseasonQueue preseason;
     private final GroupJoinLimiter joinLimiter;
     private final PlatformTransactionManager transactionManager;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -338,13 +339,15 @@ public class GroupService {
         if (list.size() != 10) blockers.add("TEN_PLAYERS_REQUIRED");
         if (list.stream().anyMatch(m -> !m.blockers().isEmpty())) blockers.add("MEMBERS_NOT_ELIGIBLE");
         // Forever compatibility and addon setup cannot yet be established by the existing heartbeat.
-        blockers.add("FOREVER_COMPATIBILITY_UNVERIFIED");
-        blockers.add("MATCHMAKING_UNAVAILABLE");
+        if (!preseason.active(season)) {
+            blockers.add("FOREVER_COMPATIBILITY_UNVERIFIED");
+            blockers.add("MATCHMAKING_UNAVAILABLE");
+        }
         var outgoing = group.getCaptainId().equals(actor)
                 ? invitations.findByGroupIdAndExpiresAtAfterOrderByExpiresAt(group.getId(), Instant.now()).stream().map(this::invitation).toList()
                 : List.<Invitation>of();
         Instant idleClosesAt = queueReservations.hasFrozenRoster(group.getId()) ? null : group.getLastMatchActivityAt().plus(LOBBY_IDLE_LIMIT);
-        return new Group(group.getId(), group.getCaptainId(), group.getRevision(), group.getRegion(), group.getJoinCode(), list, outgoing, false, blockers, idleClosesAt);
+        return new Group(group.getId(), group.getCaptainId(), group.getRevision(), group.getRegion(), group.getJoinCode(), list, outgoing, blockers.isEmpty(), blockers, idleClosesAt);
     }
 
     private Member member(PremadeGroup group, GroupMember member, SeasonEntity season) {
@@ -372,7 +375,7 @@ public class GroupService {
                 && !device.getLastSeenAt().isAfter(now) && device.getLastSeenAt().isAfter(now.minusSeconds(45));
         if (!connected) blockers.add("COMPANION_DISCONNECTED");
         if (device == null || !device.getGrantedScope().contains("evidence:write")) blockers.add("CAPTURE_PERMISSION_REQUIRED");
-        blockers.add("ADDON_STATUS_UNVERIFIED");
+        if (!preseason.active(season)) blockers.add("ADDON_STATUS_UNVERIFIED");
         if (assignments.hasBlockingParticipation(id, now)) blockers.add("MATCH_UNRESOLVED");
         if (queueTickets.hasReservation(id)) blockers.add("MATCH_UNRESOLVED");
         boolean confirmed = season != null && selection != null

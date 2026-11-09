@@ -25,6 +25,7 @@ public class PremadeQueueEligibility {
     private final MatchAssignmentRepository assignments;
     private final SoloQueueGameGateway game;
     private final ConfirmedRatingStore ratings;
+    private final PreseasonQueue preseason;
     public record Player(Long selectionVersion,UUID deviceId,SoloQueueCandidate candidate) { }
     public record Result(List<String> blockers,PremadeQueueCandidate candidate,Long seasonVersion,Map<UUID,Player> players) { }
 
@@ -37,6 +38,7 @@ public class PremadeQueueEligibility {
         var season=settings.seasonId()==null?null:seasons.findById(settings.seasonId()).orElse(null);
         if(season==null)blockers.add("SEASON_UNAVAILABLE");
         else if(season.getStartedAt()==null||season.getStartedAt().isAfter(now))blockers.add("SEASON_NOT_STARTED");
+        boolean preview=preseason.active(season);
         for(var member:roster) {
             UUID account=member.getAccountId();
             if(accounts.findById(account).filter(a->a.getStatus().equals("ACTIVE")).isEmpty())blockers.add("ACCOUNT_UNAVAILABLE");
@@ -55,8 +57,12 @@ public class PremadeQueueEligibility {
                     ||!device.getLastSeenAt().isAfter(now.minusSeconds(45)))blockers.add("COMPANION_DISCONNECTED");
             if(device==null||!Arrays.asList(device.getGrantedScope().split(" ")).contains("evidence:write"))blockers.add("CAPTURE_PERMISSION_REQUIRED");
             SoloQueueGameGateway.VerifiedPlayer proof=null;ConfirmedRatingStore.Snapshot rating=null;
+            String previewClass=null;
             if(season!=null&&selection!=null&&character!=null) {
-                proof=game.inspect(account,season,selection).orElse(null);
+                if(preview) {
+                    previewClass=preseason.selectedClass(character);
+                    if(previewClass==null)blockers.add("SELECTION_INVALID");
+                } else proof=game.inspect(account,season,selection).orElse(null);
                 if(proof!=null&&(!account.equals(proof.accountId())||!season.getId().equals(proof.seasonId())||season.getVersion()!=proof.seasonVersion()
                         ||!character.getId().equals(proof.characterId())||selection.getVersion()!=proof.selectionVersion()
                         ||!Objects.equals(selection.getCompanionDeviceId(),proof.deviceId())||!"WOW_FOREVER".equals(proof.product())
@@ -68,13 +74,14 @@ public class PremadeQueueEligibility {
                 UUID subject=season.getRatingSubjectType()==RatingSubjectType.ACCOUNT?account:character.getId();
                 rating=ratings.confirmed(season.getId(),ConfirmedRatingStore.Queue.PREMADE,season.getRatingSubjectType(),subject).orElse(null);
             }
-            if(proof==null)blockers.addAll(List.of("FOREVER_COMPATIBILITY_UNVERIFIED","ADDON_STATUS_UNVERIFIED","GAME_PRESENCE_UNVERIFIED"));
+            if(!preview&&proof==null)blockers.addAll(List.of("FOREVER_COMPATIBILITY_UNVERIFIED","ADDON_STATUS_UNVERIFIED","GAME_PRESENCE_UNVERIFIED"));
             if(rating==null)blockers.add("PREMADE_COMPETITIVE_DATA_UNAVAILABLE");
-            if(proof!=null&&rating!=null)players.put(account,new Player(selection.getVersion(),selection.getCompanionDeviceId(),
-                    new SoloQueueCandidate(account,character.getId(),season.getId(),proof.region(),proof.ruleset(),proof.groupingKey(),
-                            member.getDisplayRole(),false,now,rating.mmr(),proof.characterClass(),0)));
+            if((proof!=null||previewClass!=null)&&rating!=null)players.put(account,new Player(selection.getVersion(),selection.getCompanionDeviceId(),
+                    new SoloQueueCandidate(account,character.getId(),season.getId(),character.getRegion(),
+                            preview?PreseasonQueue.RULESET:proof.ruleset(),preview?PreseasonQueue.GROUPING_KEY:proof.groupingKey(),
+                            member.getDisplayRole(),false,now,rating.mmr(),preview?previewClass:proof.characterClass(),0)));
         }
-        if(!game.handoffAvailable())blockers.add("MATCH_ROOM_UNAVAILABLE");
+        if(!preview&&!game.handoffAvailable())blockers.add("MATCH_ROOM_UNAVAILABLE");
         PremadeQueueCandidate candidate=null;
         if(blockers.isEmpty()) {
             try { candidate=new PremadeQueueCandidate(groupId,group.getRevision(),group.getCaptainId(),season.getRatingSubjectType(),

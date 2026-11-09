@@ -281,7 +281,7 @@ paths:
       operationId: getPremadeQueue
       security: [{ webSession: [] }]
       summary: Read the caller's private premade queue and shared room
-      description: No-store account-scoped snapshot. Includes current lobby/captain control and blockers. Synthetic tickets, private contact tags and hidden MMR are excluded. Eligibility is resolved per player from the configured season, owned selection, device and game proof plus persisted premade MMR. The default game gateway remains unavailable, so it does not admit real players.
+      description: No-store account-scoped snapshot. Includes current lobby/captain control and blockers. Synthetic tickets, private contact tags and hidden MMR are excluded. Eligibility is resolved per player from the configured season, owned selection, device and persisted premade MMR. Live handoff additionally requires game proof.
       responses:
         '200':
           description: Current private queue state
@@ -293,7 +293,7 @@ paths:
       operationId: enterPremadeQueue
       security: [{ webSession: [] }]
       summary: Captain requests admission of the current complete premade
-      description: Requires CSRF and the current lobby revision. No individual readiness actions or role composition apply. Admission revalidates all ten accounts under queue/group/account locks. A verified game adapter and confirmed per-season premade state are mandatory; the unavailable default gateway still returns 409 with blockers. Browser-provided eligibility or MMR is never accepted.
+      description: Requires CSRF and the current lobby revision. No individual readiness actions or role composition apply. Admission revalidates all ten accounts under queue/group/account locks. The Preseason preview uses saved Forever characters and creates rehearsal rooms. Live matchmaking requires a verified game adapter. Browser-provided eligibility or MMR is never accepted.
       requestBody:
         required: true
         content:
@@ -335,7 +335,7 @@ paths:
       operationId: respondPremadeQueueRoom
       security: [{ webSession: [] }]
       summary: Respond individually to an own premade proposal
-      description: CSRF and own-room membership required. Acceptance revalidates both groups and all player game/device/confirmed-MMR inputs. The twentieth acceptance creates and validates exactly one shared Match with twenty assignments and frozen competitive context. Adapter/roster failures roll back that acceptance and all handoff writes. Simulation rooms are inaccessible through this endpoint; the default game gateway remains unavailable.
+      description: CSRF and own-room membership required. Acceptance revalidates both groups and their admission inputs. In Preseason preview the twentieth acceptance opens a one-minute rehearsal room. In live matchmaking it creates and validates exactly one shared Match with twenty assignments and frozen competitive context. Adapter or roster failures roll back the acceptance and handoff writes. Lab simulation rooms are inaccessible through this endpoint.
       parameters:
         - { name: room, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -1988,7 +1988,7 @@ paths:
     get:
       operationId: getPlaySelectionContext
       summary: Get the authenticated account's configured season and saved selection
-      description: Requires a current active account. Establishes the CSRF cookie. Cache-Control is no-store. No configured season returns season and selection as null. Ownership verification is currently UNVERIFIED and matchmakingAvailable is always false; Classic data cannot authorize selection.
+      description: Requires a current active account. Establishes the CSRF cookie. Cache-Control is no-store. No configured season returns season and selection as null. Ownership verification is currently UNVERIFIED. matchmakingAvailable is true during the Preseason queue preview. Classic data cannot authorize queue admission.
       responses:
         '200':
           description: Selection context; no queue eligibility is implied
@@ -2518,6 +2518,7 @@ components:
           properties:
             source: { type: string, const: FOREVER }
             status: { type: string, enum: [PROPOSED, PREPARING, CANCELLED] }
+            preseasonPreview: { type: boolean, description: Queue rehearsal without a game assignment or rating. }
       description: Private real-player room. Source is FOREVER; names contain character and realm, never private Battle.net contact tags. Hidden MMR is excluded.
     PremadeQueueAdmission:
       type: object
@@ -2536,7 +2537,7 @@ components:
             groupRevision: { type: [integer, 'null'], format: int64 }
             captainId: { type: [string, 'null'], format: uuid }
             canControl: { type: boolean }
-      description: Private premade status. Ticket ID identifies the ten-player entry for group cancellation, not an individual ticket. No hidden MMR, complete evidence or other queues' snapshots are exposed. Availability reflects server-resolved eligibility; it remains false with the default unavailable game gateway. Initial MMR is persisted as 1500 with visible rating 0, independently by season, queue and ACCOUNT/CHARACTER subject. Result movements/replay remain feature 12.
+      description: Private premade status. Ticket ID identifies the ten-player entry for group cancellation. The response omits hidden MMR, complete evidence and other queues' snapshots. Availability reflects server-resolved eligibility. Preseason rehearsals release tickets without recording results or changing ratings.
     PremadeLabStatus:
       type: object
       required: [simulation, available, blockers, groupId, groupRevision, captainId, canControl, ticket, room, matchId, serverTime, revision, simulatedMatch, recentRooms]
@@ -2954,7 +2955,7 @@ components:
             - { type: 'null' }
             - { $ref: '#/components/schemas/SeasonSelection' }
         ownershipVerification: { type: string, const: UNVERIFIED }
-        matchmakingAvailable: { type: boolean, const: false }
+        matchmakingAvailable: { type: boolean }
     SelectionSeason:
       type: object
       required: [id, name, kind, ratingSubjectType, version]

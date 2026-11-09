@@ -23,6 +23,7 @@ public class SoloQueueEligibility {
     private final MatchAssignmentRepository assignments;
     private final SoloQueueGameGateway game;
     private final SoloQueueCompetitiveData competitive;
+    private final PreseasonQueue preseason;
     public record Result(List<String> blockers,SoloQueueCandidate candidate,Long seasonVersion,Long selectionVersion,UUID deviceId) { }
 
     public Result inspect(UUID account,Instant now) {
@@ -49,8 +50,13 @@ public class SoloQueueEligibility {
         if(device==null||!Arrays.asList(device.getGrantedScope().split(" ")).contains("evidence:write"))blockers.add("CAPTURE_PERMISSION_REQUIRED");
         SoloQueueGameGateway.VerifiedPlayer proof=null;
         SoloQueueCompetitiveData.Snapshot values=null;
+        boolean preview=preseason.active(season);
+        String previewClass=null;
         if(season!=null&&selection!=null&&character!=null) {
-            proof=game.inspect(account,season,selection).orElse(null);
+            if(preview) {
+                previewClass=preseason.selectedClass(character);
+                if(previewClass==null&&!blockers.contains("SELECTION_INVALID"))blockers.add("SELECTION_INVALID");
+            } else proof=game.inspect(account,season,selection).orElse(null);
             if(proof!=null && (!account.equals(proof.accountId())||!season.getId().equals(proof.seasonId())
                     ||season.getVersion()!=proof.seasonVersion()||!character.getId().equals(proof.characterId())
                     ||selection.getVersion()!=proof.selectionVersion()||!Objects.equals(selection.getCompanionDeviceId(),proof.deviceId())
@@ -64,11 +70,12 @@ public class SoloQueueEligibility {
             if(values!=null&&(!season.getId().equals(values.seasonId())||values.subjectType()!=season.getRatingSubjectType()
                     ||!subject.equals(values.subjectId())||values.mmr()<0||values.visibleRating()<0||values.gamesPlayed()<0||values.priorCaptainAssignments()<0))values=null;
         }
-        if(proof==null)blockers.addAll(List.of("FOREVER_COMPATIBILITY_UNVERIFIED","ADDON_STATUS_UNVERIFIED","GAME_PRESENCE_UNVERIFIED"));
+        if(!preview&&proof==null)blockers.addAll(List.of("FOREVER_COMPATIBILITY_UNVERIFIED","ADDON_STATUS_UNVERIFIED","GAME_PRESENCE_UNVERIFIED"));
         if(values==null)blockers.add("COMPETITIVE_DATA_UNAVAILABLE");
-        if(!game.handoffAvailable())blockers.add("MATCH_ROOM_UNAVAILABLE");
-        SoloQueueCandidate candidate=blockers.isEmpty()?new SoloQueueCandidate(account,character.getId(),season.getId(),proof.region(),proof.ruleset(),
-                proof.groupingKey(),selection.getMatchRole(),selection.isCaptainConsent(),now,values.mmr(),proof.characterClass(),
+        if(!preview&&!game.handoffAvailable())blockers.add("MATCH_ROOM_UNAVAILABLE");
+        SoloQueueCandidate candidate=blockers.isEmpty()?new SoloQueueCandidate(account,character.getId(),season.getId(),character.getRegion(),
+                preview?PreseasonQueue.RULESET:proof.ruleset(),preview?PreseasonQueue.GROUPING_KEY:proof.groupingKey(),
+                selection.getMatchRole(),selection.isCaptainConsent(),now,values.mmr(),preview?previewClass:proof.characterClass(),
                 values.priorCaptainAssignments(),values.gamesPlayed(),values.visibleRating(),UUID.randomUUID()):null;
         return new Result(List.copyOf(blockers),candidate,season==null?null:season.getVersion(),selection==null?null:selection.getVersion(),
                 selection==null?null:selection.getCompanionDeviceId());
