@@ -75,11 +75,27 @@ class RatingResultsIntegrationTests {
         var player = publicTeam.getFirst();
         db.update("UPDATE rbgs.character_identities SET name = ? WHERE id = ?", "Public Player", player.characterId());
         var alias = characters.saveAndFlush(CharacterIdentity.declared(player.accountId(), "Unplayed Player", "Fixture"));
-        confirm(freeze(Queue.PREMADE, publicTeam, team()), "A");
+        confirm(freeze(Queue.PREMADE, publicTeam, team(" Mage ")), "A");
         mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.seasons.length()").value(1))
                 .andExpect(jsonPath("$.seasonId").value(season.toString()))
                 .andExpect(jsonPath("$.entries.length()").value(20));
+        mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE").param("region", "EU").param("limit", "10"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries[0].rank").value(1))
+                .andExpect(jsonPath("$.entries.length()").value(10)).andExpect(jsonPath("$.totalPages").value(2));
+        mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE").param("region", "NA").param("limit", "10"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seasonId").value(season.toString()))
+                .andExpect(jsonPath("$.entries").isEmpty()).andExpect(jsonPath("$.totalPages").value(0));
+        mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE").param("region", "EU")
+                .param("class", "MAGE").param("limit", "5"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries[0].rank").value(11))
+                .andExpect(jsonPath("$.entries.length()").value(5))
+                .andExpect(jsonPath("$.totalPages").value(2)).andExpect(jsonPath("$.nextOffset").value(5));
+        mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE").param("class", "MAGE").param("search", "Player0"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries.length()").value(1))
+                .andExpect(jsonPath("$.entries[0].name").value("Player0"));
+        mvc.perform(get("/api/v1/leaderboard").param("queue", "PREMADE").param("class", "MAGE", "WARRIOR"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.entries.length()").value(20));
         mvc.perform(get("/api/v1/leaderboard/profile").param("region", "eu").param("realm", "fixture")
                 .param("name", "public player")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.premade.rating").value(32))
@@ -307,6 +323,10 @@ class RatingResultsIntegrationTests {
     }
 
     private List<SoloQueueCandidate> team() {
+        return team("WARRIOR");
+    }
+
+    private List<SoloQueueCandidate> team(String characterClass) {
         return IntStream.range(0, 10).mapToObj(i -> {
             UUID account = accounts.upsert(ISSUER, UUID.randomUUID().toString(), "Rating player").id();
             var character = characters.saveAndFlush(CharacterIdentity.declared(account, "Player" + i, "Fixture"));
@@ -314,7 +334,7 @@ class RatingResultsIntegrationTests {
             selection.choose(character.getId(), RatingSubjectType.ACCOUNT, MatchRole.DPS, false);
             confirmed.initializeSelection(selections.saveAndFlush(selection).getId());
             return new SoloQueueCandidate(account, character.getId(), season, "EU", "fixture", "fixture",
-                    MatchRole.DPS, false, Instant.now(), 1500, "WARRIOR", 0);
+                    MatchRole.DPS, false, Instant.now(), 1500, characterClass, 0);
         }).toList();
     }
 

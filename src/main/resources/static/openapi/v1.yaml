@@ -15,6 +15,8 @@ paths:
       parameters:
         - { name: queue, in: query, schema: { type: string, enum: [SOLO, PREMADE], default: SOLO } }
         - { name: season, in: query, schema: { type: string, format: uuid }, description: Defaults to the latest started season. }
+        - { name: region, in: query, schema: { type: string, enum: [EU, NA] }, description: Limits ranks and pagination to this region. }
+        - { name: class, in: query, style: form, explode: true, schema: { type: array, maxItems: 9, items: { type: string, enum: [DRUID, HUNTER, MAGE, PALADIN, PRIEST, ROGUE, SHAMAN, WARLOCK, WARRIOR] } }, description: Filters by any selected class while preserving rank. }
         - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Case-insensitive character name or realm search. }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
@@ -55,6 +57,8 @@ paths:
       parameters:
         - { name: queue, in: query, schema: { type: string, enum: [SOLO, PREMADE], default: SOLO } }
         - { name: season, in: query, schema: { type: string, format: uuid }, description: Defaults to the latest started season. }
+        - { name: region, in: query, schema: { type: string, enum: [EU, NA] }, description: Limits ranks and pagination to this region. }
+        - { name: class, in: query, style: form, explode: true, schema: { type: array, maxItems: 9, items: { type: string, enum: [DRUID, HUNTER, MAGE, PALADIN, PRIEST, ROGUE, SHAMAN, WARLOCK, WARRIOR] } }, description: Filters by any selected class while preserving rank. }
         - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Case-insensitive character name or realm search. }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }

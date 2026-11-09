@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
@@ -28,11 +29,14 @@ public class LeaderboardController {
             HttpServletRequest request,
             @RequestParam(defaultValue = "SOLO") Queue queue,
             @RequestParam(required = false) UUID season,
+            @RequestParam(required = false) LeaderboardService.Region region,
+            @RequestParam(name = "class", required = false) @Size(max = 9) List<LeaderboardService.CharacterClass> classes,
             @RequestParam(defaultValue = "") @Size(max = 100) String search,
             @RequestParam(defaultValue = "20") @Min(1) @Max(50) int limit,
             @RequestParam(defaultValue = "0") @Min(0) @Max(LeaderboardService.MAX_OFFSET) int offset) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(leaderboard.page(queue, season, search.strip(), limit, offset, publicOnly(request)));
+                .body(leaderboard.page(queue, season, region, classes == null ? List.of() : classes,
+                        search.strip(), limit, offset, publicOnly(request)));
     }
 
     @GetMapping(value = {PROFILE_PATH, LOCAL_PROFILE_PATH}, params = "character")

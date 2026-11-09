@@ -62,7 +62,7 @@ class PreseasonQueueIntegrationTests {
         doReturn(preview.active(season)).when(preseason).active(argThat(value -> value != null && season.getId().equals(value.getId())));
         assertEquals("Preseason", season.getName());
         assertFalse(game.handoffAvailable());
-        assertTrue(leaderboard.page(ConfirmedRatingStore.Queue.SOLO, null, "", 1, 0, true).seasons()
+        assertTrue(leaderboard.page(ConfirmedRatingStore.Queue.SOLO, null, null, List.of(), "", 1, 0, true).seasons()
                 .stream().anyMatch(item -> item.id().equals(season.getId())));
         List<UUID> players = new ArrayList<>();
         for (int i = 0; i < 20; i++) {

@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -47,7 +48,7 @@ public class LeaderboardService {
             play.character_profile #>> '{playable_race,name}' AS race,
             play.character_profile #>> '{gender,type}' AS gender
             """;
-    private static final String APPEARANCE_JOINS = """
+    private static final String PARTICIPANT_CLASS_JOIN = """
             LEFT JOIN LATERAL (
                 SELECT player ->> 'characterClass' AS character_class
                 FROM jsonb_array_elements((context.snapshot::jsonb #> '{proposal,teamA}')
@@ -55,6 +56,8 @@ public class LeaderboardService {
                 WHERE player ->> 'characterId' = ch.id::text AND player ->> 'accountId' = ch.account_id::text
                 LIMIT 1
             ) participant ON true
+            """;
+    private static final String APPEARANCE_JOINS = PARTICIPANT_CLASS_JOIN + """
             LEFT JOIN rbgs.play_characters play ON play.account_id = ch.account_id AND ch.product = 'WOW_FOREVER'
                 AND play.region = CASE WHEN ch.region = 'US' THEN 'NA' ELSE ch.region END
                 AND play.namespace LIKE 'profile-forever-%'
@@ -66,6 +69,8 @@ public class LeaderboardService {
     private static final int PROFILE_HISTORY_LIMIT = 20;
     private final JdbcTemplate db;
 
+    public enum Region { EU, NA }
+    public enum CharacterClass { DRUID, HUNTER, MAGE, PALADIN, PRIEST, ROGUE, SHAMAN, WARLOCK, WARRIOR }
     public record Season(UUID id, String name, RatingSubjectType subjectType) {}
     public record Entry(long rank, UUID profileRef, String name, String realm, int rating, int wins, int losses, int draws,
                         String characterClass, String race, String gender, String region, boolean uniqueName) {}
@@ -82,7 +87,8 @@ public class LeaderboardService {
     private record ProfileIdentity(UUID characterId, UUID accountId) {}
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public Page page(Queue queue, UUID seasonId, String search, int limit, int offset, boolean publicOnly) {
+    public Page page(Queue queue, UUID seasonId, Region region, List<CharacterClass> classes,
+                     String search, int limit, int offset, boolean publicOnly) {
         var seasons = db.query("""
                 SELECT id, name, rating_subject_type FROM rbgs.seasons
                 WHERE started_at <= CURRENT_TIMESTAMP AND (NOT ? OR kind = 'PUBLIC')
@@ -92,6 +98,7 @@ public class LeaderboardService {
         if (seasonId == null && seasons.isEmpty()) return new Page(seasons, null, List.of(), null, 0);
         var season = seasonId == null ? seasons.getFirst() : seasons.stream().filter(item -> item.id().equals(seasonId))
                 .findFirst().orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Season unavailable"));
+        String classFilter = classes.stream().map(CharacterClass::name).collect(Collectors.joining(","));
         return db.query(RATED_MATCHES + """
                 , stats AS (
                     SELECT movement.subject_id,
@@ -114,9 +121,17 @@ public class LeaderboardService {
                         AND ch.account_id = rating.account_id
                     WHERE rating.season_id = ? AND rating.queue_type = ? AND rating.subject_type = ?
                       AND rating.games_played > 0
+                      AND (? OR CASE upper(ch.region) WHEN 'US' THEN 'NA' ELSE upper(ch.region) END = ?)
                 ), filtered AS (
                     SELECT * FROM standings
-                    WHERE strpos(lower(name || ' ' || realm), lower(?)) > 0 OR ? = ''
+                    WHERE (strpos(lower(name || ' ' || realm), lower(?)) > 0 OR ? = '')
+                      AND (? = '' OR EXISTS (
+                          SELECT 1 FROM rbgs.character_identities ch
+                          JOIN rbgs.match_competitive_context context ON context.match_id = standings.match_id
+                """ + PARTICIPANT_CLASS_JOIN + """
+                          WHERE ch.id = standings.profile_ref
+                            AND upper(btrim(participant.character_class)) = ANY(string_to_array(?, ','))
+                      ))
                 ), page AS (
                     SELECT * FROM filtered
                     ORDER BY rank LIMIT ? OFFSET ?
@@ -152,7 +167,8 @@ public class LeaderboardService {
                     return new Page(seasons, season.id(), entries, next < count && next <= MAX_OFFSET ? next : null, totalPages);
                 },
                 season.id(), season.subjectType().name(), queue.name(), season.id(), queue.name(),
-                season.subjectType().name(), search, search, limit, offset);
+                season.subjectType().name(), region == null, region == null ? null : region.name(),
+                search, search, classFilter, classFilter, limit, offset);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
