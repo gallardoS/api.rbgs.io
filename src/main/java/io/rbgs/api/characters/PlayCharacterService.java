@@ -7,10 +7,13 @@ import io.rbgs.api.groups.PremadeGroupRepository;
 import io.rbgs.api.identity.AccountRepository;
 import io.rbgs.api.identity.AccountService;
 import jakarta.validation.constraints.*;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.stereotype.Service;
@@ -29,6 +32,7 @@ public class PlayCharacterService {
     private final GroupMemberRepository members;
     private final PremadeGroupRepository groups;
     private final JdbcTemplate db;
+    private final NamedParameterJdbcTemplate named;
     private final PlatformTransactionManager transactions;
     private final AvatarPreferenceService avatarPreferences;
 
@@ -40,11 +44,26 @@ public class PlayCharacterService {
     public Selected current(Authentication auth) { return find(actor(auth)); }
 
     public Selected find(UUID account) {
-        return db.query("SELECT p.*, a.avatar_style FROM rbgs.play_characters p JOIN rbgs.accounts a ON a.id=p.account_id WHERE p.account_id=?", (row, index) -> new Selected(
+        return findAll(Set.of(account)).get(account);
+    }
+
+    public Map<UUID, Selected> findAll(Collection<UUID> accountIds) {
+        if (accountIds.isEmpty()) return Map.of();
+        return named.query("""
+                SELECT p.*, a.avatar_style FROM rbgs.play_characters p JOIN rbgs.accounts a ON a.id=p.account_id
+                WHERE p.account_id IN (:accounts)
+                """, Map.of("accounts", accountIds), rows -> {
+            Map<UUID, Selected> result = new HashMap<>();
+            while (rows.next()) result.put(rows.getObject("account_id", UUID.class), selected(rows));
+            return result;
+        });
+    }
+
+    private Selected selected(ResultSet row) throws SQLException {
+        return new Selected(
                 row.getString("namespace"), row.getLong("wow_account_id"), row.getLong("realm_id"),
                 row.getLong("character_id"), row.getString("region"), row.getString("name"), row.getString("realm"),
-                row.getString("character_profile") == null ? null : portrait(json.readValue(row.getString("character_profile"), WowCharacter.class), row.getString("avatar_style"))),
-                account).stream().findFirst().orElse(null);
+                row.getString("character_profile") == null ? null : portrait(json.readValue(row.getString("character_profile"), WowCharacter.class), row.getString("avatar_style")));
     }
 
     public Selected save(Authentication auth, OAuth2AuthorizedClient client, Reference reference) {

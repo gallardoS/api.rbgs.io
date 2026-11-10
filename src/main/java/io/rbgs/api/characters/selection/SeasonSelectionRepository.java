@@ -4,4 +4,5 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 public interface SeasonSelectionRepository extends JpaRepository<SeasonSelection, UUID> {
     Optional<SeasonSelection> findByAccountIdAndSeasonId(UUID accountId, UUID seasonId);
+    java.util.List<SeasonSelection> findBySeasonIdAndAccountIdIn(UUID seasonId, java.util.Collection<UUID> accounts);
 }

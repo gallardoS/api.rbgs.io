@@ -1,10 +1,7 @@
 package io.rbgs.api.matchmaking;
 
 import io.rbgs.api.characters.selection.*;
-import io.rbgs.api.devices.DeviceRepository;
 import io.rbgs.api.groups.*;
-import io.rbgs.api.identity.AccountRepository;
-import io.rbgs.api.matches.MatchAssignmentRepository;
 import io.rbgs.api.seasons.*;
 import java.time.Instant;
 import java.util.*;
@@ -16,13 +13,9 @@ import org.springframework.stereotype.Service;
 public class PremadeQueueEligibility {
     private final SelectionSettings settings;
     private final SeasonRepository seasons;
-    private final SeasonSelectionRepository selections;
-    private final CharacterIdentityRepository characters;
-    private final DeviceRepository devices;
-    private final AccountRepository accounts;
+    private final QueueEligibilityRoster inputs;
     private final PremadeGroupRepository groups;
     private final GroupMemberRepository members;
-    private final MatchAssignmentRepository assignments;
     private final SoloQueueGameGateway game;
     private final ConfirmedRatingStore ratings;
     private final PreseasonQueue preseason;
@@ -39,21 +32,27 @@ public class PremadeQueueEligibility {
         if(season==null)blockers.add("SEASON_UNAVAILABLE");
         else if(season.getStartedAt()==null||season.getStartedAt().isAfter(now))blockers.add("SEASON_NOT_STARTED");
         boolean preview=preseason.active(season);
+        var current = inputs.load(roster.stream().map(GroupMember::getAccountId).toList(), season, now);
+        var classes = preview ? preseason.selectedClasses(QueueEligibilityRoster.characters(current)) : Map.<UUID, String>of();
+        var confirmed = season == null ? Map.<UUID, ConfirmedRatingStore.Snapshot>of()
+                : ratings.confirmedForRoster(season.getId(), ConfirmedRatingStore.Queue.PREMADE, season.getRatingSubjectType(),
+                        QueueEligibilityRoster.subjects(current, season));
         for(var member:roster) {
             UUID account=member.getAccountId();
-            var accountRow=accounts.findById(account).filter(a->a.getStatus().equals("ACTIVE")).orElse(null);
+            var player=current.get(account);
+            var accountRow=player.activeAccount();
             if(accountRow==null)blockers.add("ACCOUNT_UNAVAILABLE");
             boolean bot=preview&&accountRow!=null&&PreseasonQueue.BOT_ISSUER.equals(accountRow.getProviderIssuer())&&preseason.botActive(account,now);
-            if(assignments.hasBlockingParticipation(account,now))blockers.add("MATCH_UNRESOLVED");
-            var selection=season==null?null:selections.findByAccountIdAndSeasonId(account,season.getId()).orElse(null);
-            var character=selection==null?null:characters.findById(selection.getCharacterId()).orElse(null);
+            if(player.blockingMatch())blockers.add("MATCH_UNRESOLVED");
+            var selection=player.selection();
+            var character=player.character();
             if(selection==null||character==null)blockers.add("SELECTION_REQUIRED");
             else if(!character.getAccountId().equals(account)||!character.getProduct().equals("WOW_FOREVER")||!character.getRegion().equals(group.getRegion())
                     ||!character.getRegion().equals("EU")||selection.getRatingSubjectType()!=season.getRatingSubjectType()
                     ||season.getRatingSubjectType()==RatingSubjectType.CHARACTER&&character.getSource()!=CharacterIdentity.Source.BLIZZARD_VERIFIED
                     ||season.getRatingSubjectType()==RatingSubjectType.ACCOUNT&&character.getSource()!=CharacterIdentity.Source.DECLARED)
                 blockers.add("SELECTION_INVALID");
-            var device=selection==null||selection.getCompanionDeviceId()==null?null:devices.findById(selection.getCompanionDeviceId()).orElse(null);
+            var device=player.device();
             if(!bot&&(device==null||!device.getAccountId().equals(account)||device.getRevokedAt()!=null||device.getRemovedAt()!=null
                     ||!device.getExpiresAt().isAfter(now)||device.getLastSeenAt()==null||device.getLastSeenAt().isAfter(now)
                     ||!device.getLastSeenAt().isAfter(now.minusSeconds(45))))blockers.add("COMPANION_DISCONNECTED");
@@ -62,7 +61,7 @@ public class PremadeQueueEligibility {
             String previewClass=null;
             if(season!=null&&selection!=null&&character!=null) {
                 if(preview) {
-                    previewClass=preseason.selectedClass(character);
+                    previewClass=classes.get(character.getId());
                     if(previewClass==null)blockers.add("SELECTION_INVALID");
                 } else proof=game.inspect(account,season,selection).orElse(null);
                 if(proof!=null&&(!account.equals(proof.accountId())||!season.getId().equals(proof.seasonId())||season.getVersion()!=proof.seasonVersion()
@@ -75,7 +74,7 @@ public class PremadeQueueEligibility {
                         ||proof.characterClass()==null||proof.characterClass().isBlank()))proof=null;
                 UUID subject=season.getRatingSubjectType()==RatingSubjectType.ACCOUNT?account:character.getId();
                 rating=bot?new ConfirmedRatingStore.Snapshot(season.getId(),season.getRatingSubjectType(),subject,1500,0,0,0,0)
-                        :ratings.confirmed(season.getId(),ConfirmedRatingStore.Queue.PREMADE,season.getRatingSubjectType(),subject).orElse(null);
+                        :confirmed.get(subject);
             }
             if(!preview&&proof==null)blockers.addAll(List.of("FOREVER_COMPATIBILITY_UNVERIFIED","ADDON_STATUS_UNVERIFIED","GAME_PRESENCE_UNVERIFIED"));
             if(rating==null)blockers.add("PREMADE_COMPETITIVE_DATA_UNAVAILABLE");

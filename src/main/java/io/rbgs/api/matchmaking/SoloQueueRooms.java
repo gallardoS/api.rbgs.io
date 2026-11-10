@@ -1,10 +1,14 @@
 package io.rbgs.api.matchmaking;
 
 import io.rbgs.api.matches.*;
+import io.rbgs.api.characters.selection.CharacterIdentity;
 import io.rbgs.api.identity.AccountRepository;
+import io.rbgs.api.identity.entity.AccountEntity;
 import io.rbgs.api.ratings.RatingResults;
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -42,13 +46,20 @@ public class SoloQueueRooms {
         if (roster.stream().noneMatch(t->t.getAccountId().equals(account))) throw new NoSuchElementException();
         var room=rooms.findById(id).orElseThrow();
         var proposal=proposals.findById(id).orElseThrow().proposal();
+        boolean real = room.getSource().equals("FOREVER");
+        var players = Stream.concat(proposal.teamA().stream(), proposal.teamB().stream()).toList();
+        Map<UUID, String> names = real
+                ? characters.findAllById(players.stream().map(SoloQueueCandidate::characterId).toList()).stream()
+                        .collect(Collectors.toMap(CharacterIdentity::getId, character -> character.getName() + " · " + character.getRealm()))
+                : accounts.findAllById(players.stream().map(SoloQueueCandidate::accountId).toList()).stream()
+                        .collect(Collectors.toMap(AccountEntity::getId, AccountEntity::getDisplayName));
         return new Room(id,room.getSource(),room.getStatus(),room.getAcceptanceDeadline(),room.getPreparationDeadline(),
-                room.getCancellationReason(),room.getVersion(),members(proposal.teamA(),proposal.captainA(),roster,room.getSource()),
-                members(proposal.teamB(),proposal.captainB(),roster,room.getSource()),PreseasonQueue.isPreview(proposal));
+                room.getCancellationReason(),room.getVersion(),members(proposal.teamA(),proposal.captainA(),roster,real,names),
+                members(proposal.teamB(),proposal.captainB(),roster,real,names),PreseasonQueue.isPreview(proposal));
     }
-    private List<Member> members(List<SoloQueueCandidate> team,UUID captain,List<QueueTicket> tickets,String source) {
-        return team.stream().map(c->new Member(c.accountId(),source.equals("FOREVER")?characters.findById(c.characterId())
-                .map(p->p.getName()+" · "+p.getRealm()).orElse("Player"):accounts.findById(c.accountId()).orElseThrow().getDisplayName(),
+    private List<Member> members(List<SoloQueueCandidate> team, UUID captain, List<QueueTicket> tickets, boolean real, Map<UUID, String> names) {
+        return team.stream().map(c->new Member(c.accountId(),real ? names.getOrDefault(c.characterId(), "Player")
+                : Optional.ofNullable(names.get(c.accountId())).orElseThrow(),
                 c.role().name(),captain.equals(c.accountId()),tickets.stream().filter(t->t.getAccountId().equals(c.accountId()))
                     .anyMatch(t->t.getAcceptedAt()!=null), tickets.stream()
                     .anyMatch(t -> t.isTestBot() && t.getAccountId().equals(c.accountId())))).toList();
@@ -66,8 +77,13 @@ public class SoloQueueRooms {
         tickets.lockCoordinator();
         Instant now=time.get();
         var roster=tickets.findByProposalIdOrderByAccountId(id);
-        var ticket=roster.stream().filter(t->t.getAccountId().equals(account)).findFirst().orElseThrow();
         var room=rooms.findById(id).orElseThrow();
+        respondLocked(account, room, roster, accept, now);
+    }
+
+    // The live queue services already hold the coordinator lock and have loaded the room and roster.
+    void respondLocked(UUID account, MatchRoomEntity room, List<QueueTicket> roster, boolean accept, Instant now) {
+        var ticket=requireParticipant(account, roster);
         if (room.due(now)) { cancel(room,roster,expirationReason(room)); return; }
         if (!Set.of("PROPOSED","PREPARING").contains(room.getStatus())) return;
         if (!accept) {
@@ -91,6 +107,10 @@ public class SoloQueueRooms {
             if (isPreview(room)) room.preparing(now,60);
             else room.preparing(now);
         }
+    }
+
+    private static QueueTicket requireParticipant(UUID account, List<QueueTicket> roster) {
+        return roster.stream().filter(ticket -> ticket.getAccountId().equals(account)).findFirst().orElseThrow();
     }
     @Transactional
     public void expire(Instant now) {

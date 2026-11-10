@@ -22,7 +22,7 @@ public class PremadeQueueService {
     private final SoloQueueRooms rooms;
     private final PremadeQueueEligibility eligibility;
     private final PremadeQueueStore store;
-    private final io.rbgs.api.identity.AccountRepository accounts;
+    private final QueueEligibilityRoster eligibilityRoster;
     private final io.rbgs.api.matches.MatchRoomRepository roomRows;
     private final QueueProposalRepository proposals;
     private final SoloQueueGameGateway game;
@@ -86,8 +86,7 @@ public class PremadeQueueService {
         members.findById(account).filter(m->m.getGroupId().equals(group.getId())).orElseThrow();
         if(!group.getCaptainId().equals(account))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Only the captain can start the premade search");
         if(group.getRevision()!=request.groupRevision())throw new ResponseStatusException(HttpStatus.CONFLICT,"Lobby changed; reload Play");
-        for(var member:members.findByGroupIdOrderByAccountId(group.getId()).stream().sorted(Comparator.comparing(GroupMember::getAccountId)).toList())
-            accounts.findForSelection(member.getAccountId()).orElseThrow();
+        eligibilityRoster.lockAccounts(members.findByGroupIdOrderByAccountId(group.getId()).stream().map(GroupMember::getAccountId).toList());
         var current=eligibility.inspect(group.getId(),Instant.now());
         if(!current.blockers().isEmpty())return false;
         store.enqueueReal(account,current);return true;
@@ -110,17 +109,17 @@ public class PremadeQueueService {
             if(accept)return;
             throw new ResponseStatusException(HttpStatus.CONFLICT,"Proposal is no longer awaiting acceptance");
         }
-        if(!accept) { rooms.respond(account,id,false);return; }
+        if(!accept) { rooms.respondLocked(account,room,roster,false,Instant.now());return; }
         var entryIds=roster.stream().map(QueueTicket::getPremadeEntryId).filter(Objects::nonNull).distinct().toList();
         if(entryIds.size()!=2||roster.size()!=20)throw new IllegalStateException("Premade proposal must contain two complete groups");
         var groupIds=entryIds.stream().map(e->entries.findById(e).orElseThrow().getGroupId()).sorted().toList();
         for(var group:groupIds)if(groups.lockById(group).isEmpty()) { rooms.cancelRoom(id,"ELIGIBILITY_CHANGED");return; }
-        for(var ticket:roster.stream().sorted(Comparator.comparing(QueueTicket::getAccountId)).toList())accounts.findForSelection(ticket.getAccountId()).orElseThrow();
+        eligibilityRoster.lockAccounts(roster.stream().map(QueueTicket::getAccountId).toList());
         for(var entryId:entryIds) {
             var entry=entries.findById(entryId).orElseThrow();
             if(!store.matches(entry,eligibility.inspect(entry.getGroupId(),Instant.now()))) { rooms.cancelRoom(id,"ELIGIBILITY_CHANGED");return; }
         }
-        rooms.respond(account,id,true);
+        rooms.respondLocked(account,room,roster,true,Instant.now());
         if(room.getStatus().equals("PREPARING")&&room.getMatchId()==null) {
             var expected=proposals.findById(id).orElseThrow().proposal();
             if(PreseasonQueue.isPreview(expected))return;

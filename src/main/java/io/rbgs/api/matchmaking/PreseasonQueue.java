@@ -5,6 +5,9 @@ import io.rbgs.api.characters.selection.CharacterIdentity;
 import io.rbgs.api.characters.selection.SelectionSettings;
 import io.rbgs.api.seasons.SeasonEntity;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -64,8 +67,17 @@ public class PreseasonQueue implements ApplicationRunner {
                 """, Boolean.class, java.sql.Timestamp.from(now), account));
     }
 
-    String selectedClass(CharacterIdentity identity) {
-        var selected = characters.find(identity.getAccountId());
+    Map<UUID, String> selectedClasses(Collection<CharacterIdentity> identities) {
+        var selected = characters.findAll(identities.stream().map(CharacterIdentity::getAccountId).distinct().toList());
+        Map<UUID, String> result = new HashMap<>();
+        for (var identity : identities) {
+            String characterClass = selectedClass(identity, selected.get(identity.getAccountId()));
+            if (characterClass != null) result.put(identity.getId(), characterClass);
+        }
+        return result;
+    }
+
+    private static String selectedClass(CharacterIdentity identity, PlayCharacterService.Selected selected) {
         if (selected == null || !"profile-forever-eu".equals(selected.namespace())
                 || !identity.getName().equals(selected.name()) || !identity.getRealm().equals(selected.realm())) return null;
         var playableClass = selected.character() == null ? null : selected.character().playableClass();

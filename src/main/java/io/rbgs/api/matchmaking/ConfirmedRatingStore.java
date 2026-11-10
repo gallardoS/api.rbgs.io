@@ -4,6 +4,7 @@ import io.rbgs.api.seasons.RatingSubjectType;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,6 +15,7 @@ public class ConfirmedRatingStore {
     public record Snapshot(UUID seasonId,RatingSubjectType subjectType,UUID subjectId,int mmr,int visibleRating,
             int gamesPlayed,int priorCaptainAssignments,long version) { }
     private final JdbcTemplate db;
+    private final NamedParameterJdbcTemplate named;
 
     @Transactional
     public void initializeSelection(UUID selectionId) {
@@ -31,12 +33,23 @@ public class ConfirmedRatingStore {
     }
 
     public Optional<Snapshot> confirmed(UUID season,Queue queue,RatingSubjectType type,UUID subject) {
-        return db.query("""
+        return Optional.ofNullable(confirmedForRoster(season, queue, type, Set.of(subject)).get(subject));
+    }
+
+    Map<UUID, Snapshot> confirmedForRoster(UUID season, Queue queue, RatingSubjectType type, Set<UUID> subjects) {
+        if (subjects.isEmpty()) return Map.of();
+        return named.query("""
             SELECT c.* FROM rbgs.competitive_ratings c JOIN rbgs.seasons s
               ON s.id=c.season_id AND s.rating_subject_type=c.subject_type
-            WHERE c.season_id=? AND c.queue_type=? AND c.subject_type=? AND c.subject_id=?
-            """,(r,i)->new Snapshot(season,type,subject,r.getInt("mmr"),r.getInt("visible_rating"),
-                    r.getInt("games_played"),r.getInt("captain_assignments"),r.getLong("version")),season,queue.name(),type.name(),subject)
-                .stream().findFirst();
+            WHERE c.season_id=:season AND c.queue_type=:queue AND c.subject_type=:type AND c.subject_id IN (:subjects)
+            """, Map.of("season", season, "queue", queue.name(), "type", type.name(), "subjects", subjects), rows -> {
+            Map<UUID, Snapshot> result = new HashMap<>();
+            while (rows.next()) {
+                UUID subject = rows.getObject("subject_id", UUID.class);
+                result.put(subject, new Snapshot(season, type, subject, rows.getInt("mmr"), rows.getInt("visible_rating"),
+                        rows.getInt("games_played"), rows.getInt("captain_assignments"), rows.getLong("version")));
+            }
+            return result;
+        });
     }
 }

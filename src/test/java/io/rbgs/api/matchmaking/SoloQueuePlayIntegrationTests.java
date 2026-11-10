@@ -31,6 +31,7 @@ class SoloQueuePlayIntegrationTests {
     @Autowired SoloQueueStore store;
     @Autowired SoloQueueRooms rooms;
     @Autowired AccountService accounts;
+    @Autowired AccountRepository accountRepository;
     @Autowired SeasonRepository seasons;
     @Autowired SeasonSelectionRepository selections;
     @Autowired CharacterIdentityRepository characters;
@@ -46,6 +47,14 @@ class SoloQueuePlayIntegrationTests {
     final List<SeasonSelection> players=new ArrayList<>();
     final List<String> subjects=new ArrayList<>();
     static final String ISSUER="https://play-soloq-fixture.example";
+
+    @Test void bulkAccountLocksUseTheSameOrderAsIndividualAccountLocks() {
+        var ids = players.stream().map(SeasonSelection::getAccountId).sorted().toList();
+        var locked = new org.springframework.transaction.support.TransactionTemplate(transactions).execute(status ->
+                accountRepository.lockQueueAccounts(ids.reversed()).stream().map(account -> account.getId()).toList());
+        assertEquals(ids, locked);
+    }
+
     @BeforeEach void setup() {
         season=new SeasonEntity("Play fixture",SeasonKind.BETA,RatingSubjectType.ACCOUNT);
         season.start(Instant.now().minusSeconds(60));season=seasons.saveAndFlush(season);
@@ -58,6 +67,7 @@ class SoloQueuePlayIntegrationTests {
                 selected.getCompanionDeviceId(),"WOW_FOREVER","EU","fixture","fixture","WARRIOR",Instant.now().minusSeconds(1),Instant.now().plusSeconds(30)));
         });
         when(competitive.confirmed(any(),any(),any())).thenAnswer(inv->Optional.of(new SoloQueueCompetitiveData.Snapshot(inv.getArgument(0),inv.getArgument(1),inv.getArgument(2),1500,0,0,0)));
+        when(competitive.confirmedForRoster(any(),any(),anySet())).thenCallRealMethod();
         when(game.createMatch(any(),any())).thenAnswer(inv->{
             SoloQueueMatcher.Proposal proposal=inv.getArgument(0);Instant now=inv.getArgument(1);
             var match=matches.saveAndFlush(new MatchEntity(proposal.captainA(),now,now.plusSeconds(600),"[]",MatchMode.MATCHMADE,MatchEvidencePolicy.FULL_ROSTER,"FOREVER_FIXTURE",now.plusSeconds(3600)));

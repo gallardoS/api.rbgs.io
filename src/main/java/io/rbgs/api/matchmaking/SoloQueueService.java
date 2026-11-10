@@ -23,6 +23,7 @@ public class SoloQueueService {
     private final MatchRepository matches;
     private final MatchAssignmentRepository assignments;
     private final AccountRepository accounts;
+    private final QueueEligibilityRoster eligibilityRoster;
     private final SoloQueueRooms rooms;
     private final SoloQueueStore store;
     private final SoloQueueGameGateway game;
@@ -59,20 +60,22 @@ public class SoloQueueService {
     public void respond(UUID account,UUID id,boolean accept) {
         tickets.lockCoordinator();
         var room=roomRows.findById(id).filter(r->r.getSource().equals("FOREVER")).orElseThrow();
-        rooms.own(account,id);
+        var roster=tickets.findByProposalIdOrderByAccountId(id);
+        if(roster.stream().noneMatch(ticket->ticket.getAccountId().equals(account)))throw new NoSuchElementException();
         if(!room.getStatus().equals("PROPOSED")) {
             if(accept)return;
             throw new ResponseStatusException(HttpStatus.CONFLICT,"Proposal is no longer awaiting acceptance");
         }
-        if(!accept) { rooms.respond(account,id,false);return; }
-        var roster=tickets.findByProposalIdOrderByAccountId(id);
+        if(!accept) { rooms.respondLocked(account,room,roster,false,Instant.now());return; }
+        var participantIds=roster.stream().map(QueueTicket::getAccountId).toList();
+        eligibilityRoster.lockAccounts(participantIds);
+        var current=eligibility.inspectRoster(participantIds,Instant.now());
         for(var member:roster) {
-            accounts.findForSelection(member.getAccountId()).orElseThrow();
-            if(!SoloQueueStore.matches(member,eligibility.inspect(member.getAccountId(),Instant.now()))) {
+            if(!SoloQueueStore.matches(member,current.get(member.getAccountId()))) {
                 rooms.cancelRoom(id,"ELIGIBILITY_CHANGED");return;
             }
         }
-        rooms.respond(account,id,true);
+        rooms.respondLocked(account,room,roster,true,Instant.now());
         if(room.getStatus().equals("PREPARING")&&room.getMatchId()==null) {
             var expected=proposals.findById(id).orElseThrow().proposal();
             if(PreseasonQueue.isPreview(expected))return;

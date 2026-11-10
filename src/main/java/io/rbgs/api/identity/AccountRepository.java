@@ -14,6 +14,15 @@ public interface AccountRepository extends JpaRepository<AccountEntity, UUID> {
     @Query("select a from AccountEntity a where a.id = :id")
     Optional<AccountEntity> findForSelection(@Param("id") UUID id);
 
+    // Match Java UUID.compareTo, including the signed halves used by other account-locking callers.
+    @Query(value = """
+            SELECT * FROM rbgs.accounts WHERE id IN (:ids)
+            ORDER BY get_byte(uuid_send(id), 0) < 128, substring(uuid_send(id), 1, 8),
+                     get_byte(uuid_send(id), 8) < 128, id
+            FOR UPDATE
+            """, nativeQuery = true)
+    java.util.List<AccountEntity> lockQueueAccounts(@Param("ids") java.util.Collection<UUID> ids);
+
     Optional<AccountEntity> findByProviderIssuerAndProviderSubject(String issuer, String subject);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
