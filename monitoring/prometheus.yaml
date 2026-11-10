@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+
+scrape_configs:
+  - job_name: rbgs-api
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["api:8081"]

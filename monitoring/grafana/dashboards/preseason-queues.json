@@ -1,0 +1,368 @@
+{
+  "title": "RBGS Preseason queues",
+  "uid": "rbgs-preseason-queues",
+  "tags": [
+    "rbgs",
+    "preseason"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Queue REST latency",
+      "description": "Latency by normalized HTTP route. Streaming connections are excluded.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le, method, uri) (rate(http_server_requests_seconds_bucket{job=\"rbgs-api\",uri=~\"/api/v1/me/(solo|premade)-queue(/.*)?\",uri!~\".*/events\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{method}} {{uri}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, method, uri) (rate(http_server_requests_seconds_bucket{job=\"rbgs-api\",uri=~\"/api/v1/me/(solo|premade)-queue(/.*)?\",uri!~\".*/events\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{method}} {{uri}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, method, uri) (rate(http_server_requests_seconds_bucket{job=\"rbgs-api\",uri=~\"/api/v1/me/(solo|premade)-queue(/.*)?\",uri!~\".*/events\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{method}} {{uri}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Queue REST responses",
+      "description": "Inspect server errors and deliberate client rejections separately.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, uri, status) (rate(http_server_requests_seconds_count{job=\"rbgs-api\",uri=~\"/api/v1/me/(solo|premade)-queue(/.*)?\",uri!~\".*/events\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} {{uri}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active queue streams",
+      "description": "SoloQ and Premade share one account-scoped PostgreSQL event channel.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rbgs_queue_sse_active{job=\"rbgs-api\"}",
+          "legendFormat": "streams {{instance}}"
+        },
+        {
+          "refId": "B",
+          "expr": "rbgs_queue_sse_accounts{job=\"rbgs-api\"}",
+          "legendFormat": "accounts {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Queue stream activity",
+      "description": "Opened includes both initial connections and reconnections. Invalidations are writes made by the server.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(rbgs_queue_sse_opened_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "opened"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(rbgs_queue_sse_invalidations_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "invalidations sent"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(rbgs_queue_sse_dispatch_failures_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "dispatch failures"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(rbgs_queue_sse_listener_failures_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "listener failures"
+        },
+        {
+          "refId": "E",
+          "expr": "sum by (reason) (rate(rbgs_queue_sse_closed_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "closed: {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Queue depth when sampled",
+      "description": "Mean waiting candidates over matching cycles that sampled the queue. Premade measures teams. Idle cycles without a sample may appear as gaps.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(rbgs_soloq_depth_sum{job=\"rbgs-api\"}[$__rate_interval])) / sum(rate(rbgs_soloq_depth_count{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "soloq"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(rbgs_premade_depth_sum{job=\"rbgs-api\"}[$__rate_interval])) / sum(rate(rbgs_premade_depth_count{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "premade"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Queue wait p95 when sampled",
+      "description": "Time already spent waiting by candidates when sampled by the matcher.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rbgs_soloq_wait_seconds_bucket{job=\"rbgs-api\"}[$__rate_interval])))",
+          "legendFormat": "soloq"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rbgs_premade_wait_seconds_bucket{job=\"rbgs-api\"}[$__rate_interval])))",
+          "legendFormat": "premade"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Proposals created",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(rbgs_soloq_proposals_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "soloq"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(rbgs_premade_proposals_total{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "premade"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Mean matching cycle duration",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(rbgs_soloq_cycle_seconds_sum{job=\"rbgs-api\"}[$__rate_interval])) / sum(rate(rbgs_soloq_cycle_seconds_count{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "soloq"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(rbgs_premade_cycle_seconds_sum{job=\"rbgs-api\"}[$__rate_interval])) / sum(rate(rbgs_premade_cycle_seconds_count{job=\"rbgs-api\"}[$__rate_interval]))",
+          "legendFormat": "premade"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "JVM heap",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (jvm_memory_used_bytes{job=\"rbgs-api\",area=\"heap\"})",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Database connection pool",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rbgs-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hikaricp_connections_active{job=\"rbgs-api\"}",
+          "legendFormat": "active {{instance}}"
+        },
+        {
+          "refId": "B",
+          "expr": "hikaricp_connections_pending{job=\"rbgs-api\"}",
+          "legendFormat": "pending {{instance}}"
+        },
+        {
+          "refId": "C",
+          "expr": "hikaricp_connections_max{job=\"rbgs-api\"}",
+          "legendFormat": "maximum {{instance}}"
+        }
+      ]
+    }
+  ]
+}

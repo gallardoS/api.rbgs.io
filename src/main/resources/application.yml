@@ -75,6 +75,12 @@ server:
         secure: ${RBGS_SECURE_COOKIES:true}
 
 management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        rbgs.soloq.wait.seconds: true
+        rbgs.premade.wait.seconds: true
   server:
     port: ${RBGS_MANAGEMENT_PORT:8081}
     address: ${RBGS_MANAGEMENT_ADDRESS:127.0.0.1}

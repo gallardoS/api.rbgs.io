@@ -1,0 +1,57 @@
+name: rbgs-monitoring
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: rbgs
+      POSTGRES_USER: rbgs
+      POSTGRES_PASSWORD: ${RBGS_DB_PASSWORD:?Set RBGS_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rbgs -d rbgs"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RBGS_DB_URL: jdbc:postgresql://postgres:5432/rbgs
+      RBGS_DB_PASSWORD: ${RBGS_DB_PASSWORD:?Set RBGS_DB_PASSWORD}
+      RBGS_BNET_CLIENT_ID: ${RBGS_BNET_CLIENT_ID:?Set RBGS_BNET_CLIENT_ID}
+      RBGS_BNET_CLIENT_SECRET: ${RBGS_BNET_CLIENT_SECRET:?Set RBGS_BNET_CLIENT_SECRET}
+      RBGS_BNET_REDIRECT_URI: ${RBGS_BNET_REDIRECT_URI:?Set RBGS_BNET_REDIRECT_URI}
+      RBGS_WEB_ORIGIN: ${RBGS_WEB_ORIGIN:-http://localhost:5173}
+      RBGS_SECURE_COOKIES: "false"
+      RBGS_PLAY_SEASON_ID: 45b0ddbd-7bae-46f3-acb3-56b8f2adfa85
+      RBGS_PLAY_PRESEASON_PREVIEW: "true"
+      RBGS_MANAGEMENT_ADDRESS: 0.0.0.0
+    ports:
+      - "127.0.0.1:${RBGS_MONITORING_API_PORT:-8080}:8080"
+
+  prometheus:
+    image: prom/prometheus:v3.13.5
+    volumes:
+      - ./monitoring/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.3.9
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${RBGS_GRAFANA_PASSWORD:?Set RBGS_GRAFANA_PASSWORD}
+    ports:
+      - "127.0.0.1:${RBGS_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

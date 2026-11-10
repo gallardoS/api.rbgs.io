@@ -35,3 +35,18 @@ jobs:
         run: psql --host=localhost --port=55432 --username=rbgs --dbname=postgres --set=ON_ERROR_STOP=1 --command='CREATE DATABASE rbgs_soloq_lab_tests OWNER rbgs;'
       - name: Verify
         run: bash ./mvnw -B verify
+      - name: F16 Preseason smoke
+        env:
+          PGPASSWORD: ${{ env.RBGS_DB_PASSWORD }}
+          RBGS_F16_DB_URL: jdbc:postgresql://127.0.0.1:55432/rbgs_f16_smoke
+          RBGS_F16_DB_PASSWORD: ${{ env.RBGS_DB_PASSWORD }}
+        run: |
+          psql --host=localhost --port=55432 --username=rbgs --dbname=postgres --set=ON_ERROR_STOP=1 --command='CREATE DATABASE rbgs_f16_smoke OWNER rbgs;'
+          bash ./mvnw -B -Dtest=PreseasonLoadSmokeTests test
+          test -s target/f16-smoke.json
+      - name: Upload F16 smoke measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: f16-smoke
+          path: target/f16-smoke.json
+          if-no-files-found: error
