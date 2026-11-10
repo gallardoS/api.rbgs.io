@@ -4,6 +4,7 @@ import io.rbgs.api.characters.selection.*;
 import io.rbgs.api.devices.DeviceRepository;
 import io.rbgs.api.identity.*;
 import io.rbgs.api.matches.MatchAssignmentRepository;
+import io.rbgs.api.matchmaking.PreseasonQueue;
 import io.rbgs.api.seasons.*;
 import java.time.Instant;
 import java.time.Duration;
@@ -134,7 +135,7 @@ public class GroupService {
             var source = locked.get(sourceId);
             boolean emptySource = false;
             if (source.getCaptainId().equals(actor)) {
-                var successor = members.findFirstByGroupIdAndAccountIdNotOrderByJoinedOrderAsc(sourceId, actor);
+                var successor = members.firstHumanSuccessor(sourceId, actor, PreseasonQueue.BOT_ISSUER);
                 if (successor.isPresent()) source.transfer(successor.get().getAccountId());
                 else emptySource = true;
             } else source.rosterChanged();
@@ -166,7 +167,8 @@ public class GroupService {
         requireCaptain(group, actor);
         if (members.countByGroupId(id) >= 10) throw conflict("This group already has ten players");
         var targets = accountRepository.findByDisplayNameAndStatus(battleTag.strip(), "ACTIVE");
-        if (targets.size() != 1) throw conflict("Could not invite this BattleTag. Check that the player has signed in to rbgs.io");
+        if (targets.size() != 1 || PreseasonQueue.BOT_ISSUER.equals(targets.getFirst().getProviderIssuer()))
+            throw conflict("Could not invite this BattleTag. Check that the player has signed in to rbgs.io");
         UUID target = targets.getFirst().getId();
         requireRegion(group, target);
         requireAvailable(target);
@@ -227,6 +229,8 @@ public class GroupService {
         requireCaptain(group, actor);
         if (target.equals(actor)) throw conflict("Choose another member as captain");
         members.findById(target).filter(m -> m.getGroupId().equals(id)).orElseThrow(GroupService::notFound);
+        if (accountRepository.findById(target).filter(a -> PreseasonQueue.BOT_ISSUER.equals(a.getProviderIssuer())).isPresent())
+            throw conflict("Test bots cannot lead a player lobby");
         queueReservations.beforeLockedLobbyChange(id);
         group.transfer(target);
         return view(group, actor);
@@ -250,7 +254,7 @@ public class GroupService {
     private boolean removeMember(PremadeGroup group, GroupMember member) {
         UUID id = group.getId(), target = member.getAccountId();
         if (group.getCaptainId().equals(target)) {
-            var successor = members.findFirstByGroupIdAndAccountIdNotOrderByJoinedOrderAsc(id, target);
+            var successor = members.firstHumanSuccessor(id, target, PreseasonQueue.BOT_ISSUER);
             if (successor.isEmpty()) {
                 groups.delete(group);
                 groups.flush();
@@ -266,8 +270,9 @@ public class GroupService {
     List<UUID> expirationCandidates(Instant now) {
         return jdbc.queryForList("""
             SELECT id FROM rbgs.premade_groups WHERE last_match_activity_at <= ?
-            UNION SELECT group_id FROM rbgs.group_members WHERE browser_seen_at <= ?
-            """, UUID.class, Timestamp.from(now.minus(LOBBY_IDLE_LIMIT)), Timestamp.from(now.minus(BROWSER_GRACE)));
+            UNION SELECT m.group_id FROM rbgs.group_members m JOIN rbgs.accounts a ON a.id=m.account_id
+            WHERE m.browser_seen_at <= ? AND a.provider_issuer <> ?
+            """, UUID.class, Timestamp.from(now.minus(LOBBY_IDLE_LIMIT)), Timestamp.from(now.minus(BROWSER_GRACE)), PreseasonQueue.BOT_ISSUER);
     }
 
     @Transactional
@@ -283,9 +288,9 @@ public class GroupService {
         }
         // Lock and recheck presence so a reconnect committed before this query wins.
         var expired = jdbc.queryForList("""
-            SELECT account_id FROM rbgs.group_members
-            WHERE group_id=? AND browser_seen_at<=? ORDER BY joined_order FOR UPDATE
-            """, UUID.class, id, Timestamp.from(now.minus(BROWSER_GRACE)));
+            SELECT m.account_id FROM rbgs.group_members m JOIN rbgs.accounts a ON a.id=m.account_id
+            WHERE m.group_id=? AND m.browser_seen_at<=? AND a.provider_issuer<>? ORDER BY m.joined_order FOR UPDATE OF m
+            """, UUID.class, id, Timestamp.from(now.minus(BROWSER_GRACE)), PreseasonQueue.BOT_ISSUER);
         if (expired.isEmpty()) return;
         queueReservations.beforeLockedLobbyChange(id);
         if (expired.contains(group.getCaptainId())) {
@@ -373,8 +378,9 @@ public class GroupService {
         boolean connected = device != null && device.getRevokedAt() == null && device.getRemovedAt() == null
                 && device.getExpiresAt().isAfter(now) && device.getLastSeenAt() != null
                 && !device.getLastSeenAt().isAfter(now) && device.getLastSeenAt().isAfter(now.minusSeconds(45));
-        if (!connected) blockers.add("COMPANION_DISCONNECTED");
-        if (device == null || !device.getGrantedScope().contains("evidence:write")) blockers.add("CAPTURE_PERMISSION_REQUIRED");
+        boolean bot = preseason.active(season) && PreseasonQueue.BOT_ISSUER.equals(account.getProviderIssuer()) && preseason.botActive(id, now);
+        if (!bot && !connected) blockers.add("COMPANION_DISCONNECTED");
+        if (!bot && (device == null || !device.getGrantedScope().contains("evidence:write"))) blockers.add("CAPTURE_PERMISSION_REQUIRED");
         if (!preseason.active(season)) blockers.add("ADDON_STATUS_UNVERIFIED");
         if (assignments.hasBlockingParticipation(id, now)) blockers.add("MATCH_UNRESOLVED");
         if (queueTickets.hasReservation(id)) blockers.add("MATCH_UNRESOLVED");

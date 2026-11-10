@@ -88,9 +88,13 @@ class AccountSessionAuthorizationTests {
         Account account = accounts.upsert(ISSUER, subject, "Tester#1234");
         Cookie session = session(subject, "USER");
         String queue = "/api/v1/tester/queue";
+        String bots = "/api/v1/tester/preseason-bots";
         try {
             mvc.perform(get(queue).param("scenario", "NORMAL").cookie(session)).andExpect(status().isForbidden());
+            mvc.perform(get(bots).cookie(session)).andExpect(status().isForbidden());
             database.update("UPDATE rbgs.accounts SET account_role = 'TESTER' WHERE id = ?", account.id());
+            mvc.perform(get(bots).cookie(session)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.running").value(false));
             mvc.perform(get(queue).param("scenario", "NO_CAPTAINS").cookie(session))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.room.teamA.length()").value(10))
                     .andExpect(jsonPath("$.room.teamB.length()").value(10));

@@ -108,12 +108,14 @@ public class SoloQueueStore {
             var result = new SoloQueueMatcher().matchWithPolicy(waiting.stream().map(t->source.equals("FOREVER")?fresh.get(t.getAccountId()):t.candidate()).toList(),now,opposition);
             if (result.isEmpty()) return Optional.empty();
             var proposal = proposals.saveAndFlush(new QueueProposal(result.get(),now));
-            rooms.saveAndFlush(new io.rbgs.api.matches.MatchRoomEntity(proposal.getId(),result.get().teamA().getFirst().seasonId(),
+            var room=rooms.saveAndFlush(new io.rbgs.api.matches.MatchRoomEntity(proposal.getId(),result.get().teamA().getFirst().seasonId(),
                     result.get().captainA(),result.get().captainB(),now,source));
             Set<UUID> reserved = new HashSet<>();
             result.get().teamA().forEach(c -> reserved.add(c.accountId()));
             result.get().teamB().forEach(c -> reserved.add(c.accountId()));
-            waiting.stream().filter(t -> reserved.contains(t.getAccountId())).forEach(t -> t.propose(proposal.getId()));
+            var roster=waiting.stream().filter(t -> reserved.contains(t.getAccountId())).toList();
+            roster.forEach(t -> t.propose(proposal.getId()));
+            if (PreseasonQueue.isPreview(result.get())) SoloQueueRooms.acceptTestBots(room, roster, now);
             tickets.flush();
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                     new org.springframework.transaction.support.TransactionSynchronization() {

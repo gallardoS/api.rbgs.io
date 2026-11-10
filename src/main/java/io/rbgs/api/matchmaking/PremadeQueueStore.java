@@ -120,13 +120,17 @@ public class PremadeQueueStore {
             if(result.isEmpty())return Optional.empty();
             var match=result.get();
             var proposal=proposals.saveAndFlush(new QueueProposal(match.sharedRoom(),now));
-            rooms.saveAndFlush(new MatchRoomEntity(proposal.getId(),match.teamA().seasonId(),
+            var room=rooms.saveAndFlush(new MatchRoomEntity(proposal.getId(),match.teamA().seasonId(),
                     match.teamA().captainId(),match.teamB().captainId(),now,source));
             var selected=Set.of(match.teamA().groupId(),match.teamB().groupId());
+            var roster=new ArrayList<QueueTicket>();
             for(var entry:waiting)if(selected.contains(entry.getGroupId())) {
                 entry.propose(proposal.getId());
-                tickets.findByPremadeEntryIdOrderByAccountId(entry.getId()).forEach(t->t.propose(proposal.getId()));
+                var team=tickets.findByPremadeEntryIdOrderByAccountId(entry.getId());
+                team.forEach(t->t.propose(proposal.getId()));
+                roster.addAll(team);
             }
+            if (PreseasonQueue.isPreview(match.sharedRoom())) SoloQueueRooms.acceptTestBots(room, roster, now);
             tickets.flush();
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                     new org.springframework.transaction.support.TransactionSynchronization() {

@@ -4,6 +4,7 @@ import io.rbgs.api.characters.PlayCharacterService;
 import io.rbgs.api.characters.selection.CharacterIdentity;
 import io.rbgs.api.characters.selection.SelectionSettings;
 import io.rbgs.api.seasons.SeasonEntity;
+import java.time.Instant;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class PreseasonQueue implements ApplicationRunner {
+    public static final String BOT_ISSUER = "https://preseason-bots.invalid";
     public static final UUID SEASON_ID = UUID.fromString("45b0ddbd-7bae-46f3-acb3-56b8f2adfa85");
     static final String RULESET = "PRESEASON_QUEUE_PREVIEW";
     static final String GROUPING_KEY = "PRESEASON_EU";
@@ -44,6 +46,22 @@ public class PreseasonQueue implements ApplicationRunner {
 
     public boolean active(SeasonEntity season) {
         return enabled && season != null && SEASON_ID.equals(season.getId());
+    }
+
+    public boolean botActive(UUID account, Instant now) {
+        return Boolean.TRUE.equals(db.queryForObject("""
+                SELECT EXISTS (
+                    SELECT 1 FROM rbgs.preseason_bot_run
+                    WHERE (expires_at > ? AND (
+                        host_ticket_id IS NULL OR EXISTS (
+                            SELECT 1 FROM rbgs.queue_tickets host WHERE host.id = host_ticket_id AND host.state = 'QUEUED'
+                        )
+                    )) OR EXISTS (
+                        SELECT 1 FROM rbgs.queue_tickets
+                        WHERE account_id = ? AND test_bot AND state = 'PROPOSED'
+                    )
+                )
+                """, Boolean.class, java.sql.Timestamp.from(now), account));
     }
 
     String selectedClass(CharacterIdentity identity) {

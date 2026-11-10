@@ -22,9 +22,19 @@ public class SoloQueueRooms {
     private final io.rbgs.api.characters.selection.CharacterIdentityRepository characters;
     private final RatingResults ratings;
 
-    public record Member(UUID accountId,String name,String role,boolean captain,boolean accepted) { }
+    public record Member(UUID accountId,String name,String role,boolean captain,boolean accepted,boolean testBot) { }
     public record Room(UUID id,String source,String status,Instant acceptanceDeadline,Instant preparationDeadline,
             String cancellationReason,long version,List<Member> teamA,List<Member> teamB,boolean preseasonPreview) { }
+
+    static void acceptTestBots(MatchRoomEntity room, List<QueueTicket> roster, Instant now) {
+        if (roster.stream().noneMatch(QueueTicket::isTestBot)) return;
+        if (roster.stream().allMatch(QueueTicket::isTestBot))
+            throw new IllegalStateException("A public rehearsal requires a real participant");
+        for (var ticket : roster) if (ticket.isTestBot()) {
+            ticket.accept(now);
+            room.acceptanceChanged();
+        }
+    }
 
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Room own(UUID account,UUID id) {
@@ -40,7 +50,8 @@ public class SoloQueueRooms {
         return team.stream().map(c->new Member(c.accountId(),source.equals("FOREVER")?characters.findById(c.characterId())
                 .map(p->p.getName()+" · "+p.getRealm()).orElse("Player"):accounts.findById(c.accountId()).orElseThrow().getDisplayName(),
                 c.role().name(),captain.equals(c.accountId()),tickets.stream().filter(t->t.getAccountId().equals(c.accountId()))
-                    .anyMatch(t->t.getAcceptedAt()!=null))).toList();
+                    .anyMatch(t->t.getAcceptedAt()!=null), tickets.stream()
+                    .anyMatch(t -> t.isTestBot() && t.getAccountId().equals(c.accountId())))).toList();
     }
 
     @Transactional

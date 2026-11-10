@@ -26,6 +26,7 @@ public class QueueTicket {
     @Column(name="season_version",updatable=false) private Long seasonVersion;
     @Column(name="selection_version",updatable=false) private Long selectionVersion;
     @Column(name="companion_device_id",updatable=false) private UUID companionDeviceId;
+    @Column(name="test_bot",updatable=false,nullable=false) private boolean testBot;
     @Column(name="cancellation_reason",length=64) private String cancellationReason;
     @Column(name="premade_entry_id",updatable=false) private UUID premadeEntryId;
     @Version private long version;
@@ -51,7 +52,8 @@ public class QueueTicket {
         realAdmission(eligibility.seasonVersion(),eligibility.selectionVersion(),eligibility.deviceId());
     }
     void realAdmission(Long season,Long selection,UUID device) {
-        source="FOREVER";seasonVersion=java.util.Objects.requireNonNull(season);selectionVersion=java.util.Objects.requireNonNull(selection);companionDeviceId=java.util.Objects.requireNonNull(device);
+        source="FOREVER";seasonVersion=java.util.Objects.requireNonNull(season);selectionVersion=java.util.Objects.requireNonNull(selection);
+        companionDeviceId=device;testBot=device==null;
     }
     void invalidate() { invalidate("ELIGIBILITY_CHANGED"); }
     void invalidate(String reason) { cancel();cancellationReason=java.util.Objects.requireNonNull(reason); }

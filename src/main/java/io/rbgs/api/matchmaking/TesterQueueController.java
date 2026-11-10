@@ -52,6 +52,6 @@ class TesterQueueController {
             List<SoloQueueCandidate> candidates) {
         return team.stream().map(player -> new SoloQueueRooms.Member(player.accountId(),
                 "Test player " + (candidates.indexOf(player) + 1), player.role().name(),
-                captain.equals(player.accountId()), !actor.equals(player.accountId()))).toList();
+                captain.equals(player.accountId()), !actor.equals(player.accountId()), false)).toList();
     }
 }

@@ -46,6 +46,8 @@ Integration tests use the local PostgreSQL configured through `.env` and `RBGS_D
 
 To open the Preseason queue preview, set `RBGS_PLAY_SEASON_ID=45b0ddbd-7bae-46f3-acb3-56b8f2adfa85` and `RBGS_PLAY_PRESEASON_PREVIEW=true` together. Startup creates the public, account-based Preseason once. SoloQ and Premade use the normal acceptance flow and a one-minute rehearsal room, then release the players to queue again. Rehearsal rooms generate no game assignments or rating changes. Keep the same season ID when switching to a verified game gateway and turn off the preview flag. The Season 1 announcement and email launch switch are independent.
 
+Tester Tools can add bots to these public queues while the preview is enabled. Start a SoloQ search first, or fill an EU Premade lobby as captain and start the search from Play. The controls allow one active run. Unmatched bots are removed when the host search ends or after three minutes. Other players can be matched with the bots and see the bot count in Match Ready.
+
 ## HTTP API and security
 
 The contract is in [OpenAPI](src/main/resources/static/openapi/v1.yaml), served at `/openapi/v1.yaml`.

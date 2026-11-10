@@ -41,7 +41,9 @@ public class PremadeQueueEligibility {
         boolean preview=preseason.active(season);
         for(var member:roster) {
             UUID account=member.getAccountId();
-            if(accounts.findById(account).filter(a->a.getStatus().equals("ACTIVE")).isEmpty())blockers.add("ACCOUNT_UNAVAILABLE");
+            var accountRow=accounts.findById(account).filter(a->a.getStatus().equals("ACTIVE")).orElse(null);
+            if(accountRow==null)blockers.add("ACCOUNT_UNAVAILABLE");
+            boolean bot=preview&&accountRow!=null&&PreseasonQueue.BOT_ISSUER.equals(accountRow.getProviderIssuer())&&preseason.botActive(account,now);
             if(assignments.hasBlockingParticipation(account,now))blockers.add("MATCH_UNRESOLVED");
             var selection=season==null?null:selections.findByAccountIdAndSeasonId(account,season.getId()).orElse(null);
             var character=selection==null?null:characters.findById(selection.getCharacterId()).orElse(null);
@@ -52,10 +54,10 @@ public class PremadeQueueEligibility {
                     ||season.getRatingSubjectType()==RatingSubjectType.ACCOUNT&&character.getSource()!=CharacterIdentity.Source.DECLARED)
                 blockers.add("SELECTION_INVALID");
             var device=selection==null||selection.getCompanionDeviceId()==null?null:devices.findById(selection.getCompanionDeviceId()).orElse(null);
-            if(device==null||!device.getAccountId().equals(account)||device.getRevokedAt()!=null||device.getRemovedAt()!=null
+            if(!bot&&(device==null||!device.getAccountId().equals(account)||device.getRevokedAt()!=null||device.getRemovedAt()!=null
                     ||!device.getExpiresAt().isAfter(now)||device.getLastSeenAt()==null||device.getLastSeenAt().isAfter(now)
-                    ||!device.getLastSeenAt().isAfter(now.minusSeconds(45)))blockers.add("COMPANION_DISCONNECTED");
-            if(device==null||!Arrays.asList(device.getGrantedScope().split(" ")).contains("evidence:write"))blockers.add("CAPTURE_PERMISSION_REQUIRED");
+                    ||!device.getLastSeenAt().isAfter(now.minusSeconds(45))))blockers.add("COMPANION_DISCONNECTED");
+            if(!bot&&(device==null||!Arrays.asList(device.getGrantedScope().split(" ")).contains("evidence:write")))blockers.add("CAPTURE_PERMISSION_REQUIRED");
             SoloQueueGameGateway.VerifiedPlayer proof=null;ConfirmedRatingStore.Snapshot rating=null;
             String previewClass=null;
             if(season!=null&&selection!=null&&character!=null) {
@@ -72,11 +74,12 @@ public class PremadeQueueEligibility {
                         ||proof.ruleset()==null||proof.ruleset().isBlank()||proof.groupingKey()==null||proof.groupingKey().isBlank()
                         ||proof.characterClass()==null||proof.characterClass().isBlank()))proof=null;
                 UUID subject=season.getRatingSubjectType()==RatingSubjectType.ACCOUNT?account:character.getId();
-                rating=ratings.confirmed(season.getId(),ConfirmedRatingStore.Queue.PREMADE,season.getRatingSubjectType(),subject).orElse(null);
+                rating=bot?new ConfirmedRatingStore.Snapshot(season.getId(),season.getRatingSubjectType(),subject,1500,0,0,0,0)
+                        :ratings.confirmed(season.getId(),ConfirmedRatingStore.Queue.PREMADE,season.getRatingSubjectType(),subject).orElse(null);
             }
             if(!preview&&proof==null)blockers.addAll(List.of("FOREVER_COMPATIBILITY_UNVERIFIED","ADDON_STATUS_UNVERIFIED","GAME_PRESENCE_UNVERIFIED"));
             if(rating==null)blockers.add("PREMADE_COMPETITIVE_DATA_UNAVAILABLE");
-            if((proof!=null||previewClass!=null)&&rating!=null)players.put(account,new Player(selection.getVersion(),selection.getCompanionDeviceId(),
+            if((proof!=null||previewClass!=null)&&rating!=null)players.put(account,new Player(selection.getVersion(),bot?null:selection.getCompanionDeviceId(),
                     new SoloQueueCandidate(account,character.getId(),season.getId(),character.getRegion(),
                             preview?PreseasonQueue.RULESET:proof.ruleset(),preview?PreseasonQueue.GROUPING_KEY:proof.groupingKey(),
                             member.getDisplayRole(),false,now,rating.mmr(),preview?previewClass:proof.characterClass(),0)));

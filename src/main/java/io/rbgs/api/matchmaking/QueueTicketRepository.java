@@ -17,6 +17,7 @@ public interface QueueTicketRepository extends JpaRepository<QueueTicket, UUID> 
     List<QueueTicket> findByPremadeEntryIdOrderByAccountId(UUID entry);
     List<QueueTicket> findBySeasonId(UUID season);
     long countByState(String state);
+    boolean existsByTestBotTrueAndState(String state);
     long countBySourceAndQueueTypeAndState(String source,String queueType,String state);
     @Query("select t from QueueTicket t where t.accountId=:account and t.proposalId is not null order by t.enteredAt desc,t.id desc")
     List<QueueTicket> recentRooms(UUID account,org.springframework.data.domain.Pageable page);

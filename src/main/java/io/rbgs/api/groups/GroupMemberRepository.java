@@ -18,7 +18,12 @@ public interface GroupMemberRepository extends JpaRepository<GroupMember, UUID> 
         """, nativeQuery = true)
     int recordJoinAttempt(UUID account);
     List<GroupMember> findByGroupIdOrderByAccountId(UUID groupId);
-    Optional<GroupMember> findFirstByGroupIdAndAccountIdNotOrderByJoinedOrderAsc(UUID groupId, UUID accountId);
+    @org.springframework.data.jpa.repository.Query(value = """
+        SELECT m.* FROM rbgs.group_members m JOIN rbgs.accounts a ON a.id = m.account_id
+        WHERE m.group_id = :groupId AND m.account_id <> :accountId AND a.provider_issuer <> :excludedIssuer
+        ORDER BY m.joined_order LIMIT 1
+        """, nativeQuery = true)
+    Optional<GroupMember> firstHumanSuccessor(UUID groupId, UUID accountId, String excludedIssuer);
     @org.springframework.data.jpa.repository.Query("select m.groupId from GroupMember m where m.accountId = :accountId")
     Optional<UUID> findGroupIdByAccountId(UUID accountId);
     @org.springframework.data.jpa.repository.Query(value = "select nextval(pg_get_serial_sequence('rbgs.group_members', 'joined_order'))", nativeQuery = true)

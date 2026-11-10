@@ -602,6 +602,43 @@ paths:
         '403': { description: CSRF unavailable }
         '404': { description: Actor, ticket or room unavailable to this session }
         '409': { description: Command conflicts with current state }
+  /tester/preseason-bots:
+    get:
+      operationId: getPreseasonBotStatus
+      security: [{ webSession: [] }]
+      summary: Read whether a public Preseason rehearsal can be started
+      description: Requires Tester or higher. Initializes CSRF.
+      responses:
+        '200':
+          description: Current availability, whether a rehearsal exists, and whether the caller owns it
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreseasonBotStatus' }
+    post:
+      operationId: startPreseasonBotRehearsal
+      security: [{ webSession: [] }]
+      summary: Add bots for a public Preseason rehearsal
+      description: Requires Tester or higher and CSRF. The caller must already be searching in SoloQ or lead an EU premade lobby. Only one rehearsal can run at a time.
+      parameters:
+        - { name: queue, in: query, required: true, schema: { type: string, enum: [SOLO, PREMADE] } }
+      responses:
+        '200':
+          description: Rehearsal started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreseasonBotStatus' }
+        '409': { description: A rehearsal is already running or queue conditions are not met }
+    delete:
+      operationId: stopPreseasonBotRehearsal
+      security: [{ webSession: [] }]
+      summary: Remove the caller's unmatched bots while keeping any existing proposal
+      description: Requires Tester or higher and CSRF. Has no effect on another tester's rehearsal.
+      responses:
+        '200':
+          description: Current rehearsal status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreseasonBotStatus' }
   /me/solo-queue:
     get:
       operationId: getOwnSoloQueue
@@ -2466,6 +2503,14 @@ components:
         role: { type: string, enum: [FC, HEALER, DPS] }
         captain: { type: boolean }
         accepted: { type: boolean }
+        testBot: { type: boolean, description: Automatically accepted bot in a public Preseason rehearsal. }
+    PreseasonBotStatus:
+      type: object
+      required: [available, running, owned]
+      properties:
+        available: { type: boolean }
+        running: { type: boolean }
+        owned: { type: boolean }
     SoloQueueLabRoom:
       type: object
       required: [id, source, status, acceptanceDeadline, preparationDeadline, cancellationReason, version, teamA, teamB]
