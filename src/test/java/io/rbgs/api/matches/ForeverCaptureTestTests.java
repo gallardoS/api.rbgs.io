@@ -201,6 +201,17 @@ class ForeverCaptureTestTests {
         mvc.perform(get("/api/v1/me/matches").with(login())).andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].flagScore.own").value(3))
                 .andExpect(jsonPath("$.items[0].flagScore.opponent").value(0));
+        var matchId = UUID.fromString(descriptor.get("matchId").toString());
+        db.update("UPDATE rbgs.matches SET cancelled_at=now() WHERE id=?", matchId);
+        entityManager.clear();
+        mvc.perform(get("/api/v1/me/matches").with(login())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].result").value("CANCELLED"))
+                .andExpect(jsonPath("$.items[0].flagScore.own").value(3))
+                .andExpect(jsonPath("$.items[0].flagScore.opponent").value(0));
+        mvc.perform(get("/api/v1/me/matches/{id}", matchId).with(login())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.match.result").value("CANCELLED"))
+                .andExpect(jsonPath("$.match.flagScore.own").value(3))
+                .andExpect(jsonPath("$.match.flagScore.opponent").value(0));
         assertEquals("CAPTURE_ONLY_NO_EXPECTED_TEAMS", db.queryForObject("SELECT review_reason FROM rbgs.capture_evidence WHERE id=?", String.class, receipt.evidenceId()));
         assertThrows(IllegalArgumentException.class, () -> new MatchEntity(accountId, java.time.Instant.now(), java.time.Instant.now(), "[]",
                 MatchMode.MATCHMADE, MatchEvidencePolicy.FULL_ROSTER, "FOREVER_WSG_TEST", java.time.Instant.now()));

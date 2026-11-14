@@ -76,8 +76,7 @@ public class MatchHistoryService {
     }
 
     private boolean hasWarsongScore(MatchAssignmentEntity assignment) {
-        var match = assignment.getMatch();
-        return match.getCancelledAt() == null && Set.of("FOREVER_WSG_TEST", "TBC_ANNIVERSARY_WSG_TEST").contains(match.getProfile());
+        return Set.of("FOREVER_WSG_TEST", "TBC_ANNIVERSARY_WSG_TEST").contains(assignment.getMatch().getProfile());
     }
 
     private Item item(MatchAssignmentEntity assignment, CaptureEvidenceEntity report) {
