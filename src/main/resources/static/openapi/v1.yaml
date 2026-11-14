@@ -2839,6 +2839,14 @@ components:
         disputeStatus: { type: [string, 'null'], enum: [OPEN, WAITING_PLAYER, RESOLVED, null] }
         unread: { type: boolean }
         cancelled: { type: boolean }
+        flagScore:
+          type: [object, 'null']
+          description: Flag captures from the participant's saved Warsong Gulch scoreboard, with their team first.
+          additionalProperties: false
+          required: [own, opponent]
+          properties:
+            own: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            opponent: { type: integer, minimum: 0, maximum: 9007199254740991 }
     ParticipantMatchDetail:
       type: object
       additionalProperties: false

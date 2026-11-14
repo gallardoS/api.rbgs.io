@@ -182,6 +182,12 @@ class ForeverCaptureTestTests {
         report.put("matchId", descriptor.get("matchId").toString());
         report.put("assignmentId", descriptor.get("assignmentId").toString());
         report.put("assignmentCode", issued.get("assignmentCode"));
+        var observed = CaptureJson.object(report.get("observedCharacter"));
+        var captureRows = CaptureJson.rows(CaptureJson.object(report.get("capture")).get("roster"), 1, 40);
+        var player = captureRows.stream().map(CaptureJson::object).map(row -> CaptureJson.object(row.get("character")))
+                .filter(character -> observed.get("name").equals(character.get("name"))).findFirst().orElseThrow();
+        observed.put("name", "OwnedPlayer Surname");
+        player.put("name", "OwnedPlayer Surname");
         UUID device = UUID.randomUUID();
         db.update("INSERT INTO rbgs.devices(id,account_id,token_hash,created_at,expires_at,granted_scope,last_seen_at) VALUES(?,?,?,now(),now()+interval '1 day','companion:status companion:assignments evidence:write',now())",
                 device, accountId, UUID.randomUUID().toString());
@@ -192,6 +198,9 @@ class ForeverCaptureTestTests {
         var rows = (List<?>)CaptureJson.object(payload.get("capture")).get("roster");
         assertEquals(19, rows.size());
         assertEquals(3L, rows.stream().map(CaptureJson::object).mapToLong(r -> CaptureJson.number(r.get("flagsCaptured"))).sum());
+        mvc.perform(get("/api/v1/me/matches").with(login())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].flagScore.own").value(3))
+                .andExpect(jsonPath("$.items[0].flagScore.opponent").value(0));
         assertEquals("CAPTURE_ONLY_NO_EXPECTED_TEAMS", db.queryForObject("SELECT review_reason FROM rbgs.capture_evidence WHERE id=?", String.class, receipt.evidenceId()));
         assertThrows(IllegalArgumentException.class, () -> new MatchEntity(accountId, java.time.Instant.now(), java.time.Instant.now(), "[]",
                 MatchMode.MATCHMADE, MatchEvidencePolicy.FULL_ROSTER, "FOREVER_WSG_TEST", java.time.Instant.now()));
