@@ -161,15 +161,12 @@ public class GroupService {
     }
 
     @Transactional
-    public Group invite(Authentication auth, UUID id, long revision, String battleTag) {
+    public Group invite(Authentication auth, UUID id, long revision, String battleTag, String characterName) {
         UUID actor = actor(auth);
         var group = lockedMember(id, actor, revision);
         requireCaptain(group, actor);
         if (members.countByGroupId(id) >= 10) throw conflict("This group already has ten players");
-        var targets = accountRepository.findByDisplayNameAndStatus(battleTag.strip(), "ACTIVE");
-        if (targets.size() != 1 || PreseasonQueue.BOT_ISSUER.equals(targets.getFirst().getProviderIssuer()))
-            throw conflict("Could not invite this BattleTag. Check that the player has signed in to rbgs.io");
-        UUID target = targets.getFirst().getId();
+        UUID target = battleTag == null ? onlineCharacter(group.getRegion(), characterName.strip()) : battleTagAccount(battleTag.strip());
         requireRegion(group, target);
         requireAvailable(target);
         var existing = invitations.findByGroupIdAndAccountId(id, target).orElse(null);
@@ -179,6 +176,31 @@ public class GroupService {
             invitations.saveAndFlush(new GroupInvitation(id, target));
         } else existing.renew();
         return view(group, actor);
+    }
+
+    private UUID battleTagAccount(String battleTag) {
+        var targets = accountRepository.findByDisplayNameAndStatus(battleTag, "ACTIVE");
+        if (targets.size() != 1 || PreseasonQueue.BOT_ISSUER.equals(targets.getFirst().getProviderIssuer()))
+            throw conflict("Could not invite this BattleTag. Check that the player has signed in to rbgs.io");
+        return targets.getFirst().getId();
+    }
+
+    private UUID onlineCharacter(String region, String name) {
+        var now = Instant.now();
+        var targets = jdbc.queryForList("""
+                SELECT p.account_id FROM rbgs.play_characters p JOIN rbgs.accounts a ON a.id = p.account_id
+                WHERE p.namespace IN ('profile-forever-eu', 'profile-forever-us')
+                    AND p.region = ? AND lower(p.name) = lower(?) AND a.account_status = 'ACTIVE' AND a.provider_issuer <> ?
+                    AND EXISTS (
+                        SELECT 1 FROM rbgs.lobby_browser_presence b
+                        JOIN rbgs.spring_session s ON s.primary_id = b.session_primary_id
+                        WHERE b.account_id = p.account_id AND b.seen_at > ? AND s.expiry_time > ?
+                    )
+                LIMIT 2
+                """, UUID.class, region, name, PreseasonQueue.BOT_ISSUER,
+                Timestamp.from(now.minus(BROWSER_GRACE)), now.toEpochMilli());
+        if (targets.size() != 1) throw conflict("Could not find this selected Forever character online on rbgs.io");
+        return targets.getFirst();
     }
 
     @Transactional

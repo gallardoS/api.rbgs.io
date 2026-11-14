@@ -87,7 +87,7 @@ class GroupIntegrationTests {
     }
     private RequestPostProcessor login(int i) { return oidcLogin().idToken(t -> t.issuer(ISSUER).subject(subjects.get(i))); }
     private GroupService.Group invite(GroupService.Group group, int captain, int target) {
-        return service.invite(auth(captain), group.id(), group.revision(), players.get(target).displayName());
+        return service.invite(auth(captain), group.id(), group.revision(), players.get(target).displayName(), null);
     }
     private GroupService.Group join(GroupService.Group group, int captain, int target) {
         invite(group, captain, target);
@@ -206,6 +206,42 @@ class GroupIntegrationTests {
         service.cancelInvitation(auth(0), group.id(), group.revision(), invitation.id());
         await(() -> changes(recipient) > invited);
         assertNull(service.own(auth(1))); assertTrue(service.incoming(auth(1)).isEmpty());
+    }
+
+    @Test void characterInvitationUsesTheConnectedAccountsCurrentForeverSelectionInTheLobbyRegion() throws Exception {
+        var group = service.create(auth(0));
+        var name = "Riven " + UUID.randomUUID();
+        var newName = "Ash " + UUID.randomUUID();
+        db.update("UPDATE rbgs.play_characters SET namespace='profile-forever-eu', name=? WHERE account_id=?", name, players.get(1).id());
+        db.update("UPDATE rbgs.play_characters SET namespace='profile-forever-us', region='NA', name=? WHERE account_id=?", name, players.get(2).id());
+        db.update("UPDATE rbgs.play_characters SET name=? WHERE account_id=?", name, players.get(3).id());
+        stream(2);
+        stream(3);
+        String path = "/api/v1/groups/" + group.id() + "/invitations";
+        String body = "{\"expectedRevision\":" + group.revision() + ",\"characterName\":\"" + name.toUpperCase(Locale.ROOT) + "\"}";
+
+        mvc.perform(post(path).with(login(0)).with(csrf()).contentType("application/json").content(body))
+                .andExpect(status().isConflict());
+
+        var recipient = stream(1);
+        int before = changes(recipient);
+        mvc.perform(post(path).with(login(0)).with(csrf()).contentType("application/json").content(body))
+                .andExpect(status().isOk());
+        await(() -> changes(recipient) > before);
+        assertEquals(1, service.incoming(auth(1)).size());
+        assertTrue(service.incoming(auth(2)).isEmpty());
+        assertTrue(service.incoming(auth(3)).isEmpty());
+
+        db.update("UPDATE rbgs.play_characters SET name=? WHERE account_id=?", newName, players.get(1).id());
+        conflict(() -> service.invite(auth(0), group.id(), group.revision(), null, name));
+
+        streams.closeAccount(players.get(1).id());
+        db.update("UPDATE rbgs.lobby_browser_presence SET seen_at=clock_timestamp() - interval '31 seconds' WHERE account_id=?", players.get(1).id());
+        conflict(() -> service.invite(auth(0), group.id(), group.revision(), null, newName));
+
+        stream(1);
+        sessions.deleteById(streamSessions.getLast());
+        conflict(() -> service.invite(auth(0), group.id(), group.revision(), null, newName));
     }
     @Test void sseCodeSwitchNotifiesMembersOfBothSourceAndDestination() throws Exception {
         var source = join(service.create(auth(0)), 0, 2);

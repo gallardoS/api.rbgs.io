@@ -925,8 +925,8 @@ paths:
     post:
       operationId: invitePremadePlayer
       security: [{ webSession: [] }]
-      summary: Captain invites a registered active player's full BattleTag
-      description: Requires CSRF. Thirty-minute expiry; at most twenty live invitations per group. An exact unambiguous active account must match. Renews an existing invitation for the same account. Does not change roster revision.
+      summary: Invite by BattleTag or by the full name of an online Forever character
+      description: Requires CSRF. A character must be selected in Play by a player currently connected to rbgs.io in the lobby's region. Invitations expire after 60 seconds. At most twenty live invitations per group. Reinviting the same account renews its invitation without changing the roster revision.
       requestBody:
         required: true
         content:
@@ -935,12 +935,16 @@ paths:
               allOf:
                 - { $ref: '#/components/schemas/GroupRevision' }
                 - type: object
-                  required: [battleTag]
+                  oneOf:
+                    - required: [battleTag]
+                    - required: [characterName]
                   properties:
                     battleTag: { type: string, maxLength: 100, pattern: '^[^\p{Cntrl}]+#[0-9]+$' }
+                    characterName: { type: string, minLength: 1, maxLength: 100, description: 'Full Forever character name, including surname. Matches case-insensitively.' }
       responses:
         '200': { $ref: '#/components/responses/PremadeGroup' }
-        '409': { description: Stale group, unknown BattleTag, full group, invitation limit, existing membership or unresolved match }
+        '400': { description: Invalid invitation recipient }
+        '409': { description: Stale group, recipient unavailable, full group, invitation limit, existing membership or unresolved match }
   /me/group-invitations/{invitationId}/accept:
     parameters: [{ $ref: '#/components/parameters/GroupInvitationId' }]
     post:

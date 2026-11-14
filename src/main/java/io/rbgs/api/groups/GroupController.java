@@ -18,7 +18,13 @@ public class GroupController {
     private final io.rbgs.api.identity.AccountService accounts;
     public record Revision(@NotNull @PositiveOrZero Long expectedRevision) { }
     public record Invite(@NotNull @PositiveOrZero Long expectedRevision,
-            @NotBlank @Size(max = 100) @Pattern(regexp = "^[^\\p{Cntrl}]+#[0-9]+$") String battleTag) { }
+            @Size(max = 100) @Pattern(regexp = "^[^\\p{Cntrl}]+#[0-9]+$") String battleTag,
+            @Size(max = 100) @Pattern(regexp = "^[^#\\p{Cntrl}]+$") String characterName) {
+        @AssertTrue
+        public boolean isRecipientValid() {
+            return battleTag == null ? characterName != null && !characterName.isBlank() : characterName == null;
+        }
+    }
     public record Target(@NotNull @PositiveOrZero Long expectedRevision, @NotNull UUID accountId) { }
     public record Join(@NotBlank @Size(max = 64) String code) { }
     public record Code(@NotNull @PositiveOrZero Long expectedRevision, @NotNull Boolean enabled) { }
@@ -44,8 +50,14 @@ public class GroupController {
         return response(service.own(auth));
     }
     @GetMapping("/api/v1/me/group-invitations")
-    public ResponseEntity<List<GroupService.Invitation>> incoming(Authentication auth, CsrfToken csrf) {
-        csrf.getToken(); return response(service.incoming(auth));
+    public ResponseEntity<List<GroupService.Invitation>> incoming(Authentication auth, CsrfToken csrf,
+            jakarta.servlet.http.HttpServletRequest request) {
+        csrf.getToken();
+        var invitations = service.incoming(auth);
+        var session = request.getSession(false);
+        var profile = accounts.currentUser(auth);
+        if (profile != null && session != null) lifecycle.invitationBrowserSeen(profile.id(), session.getId());
+        return response(invitations);
     }
     @PostMapping("/api/v1/groups")
     public ResponseEntity<GroupService.Group> create(Authentication auth) { return response(service.create(auth)); }
@@ -57,7 +69,7 @@ public class GroupController {
     }
     @PostMapping("/api/v1/groups/{id}/invitations")
     public ResponseEntity<GroupService.Group> invite(Authentication auth, @PathVariable UUID id, @Valid @RequestBody Invite body) {
-        return response(service.invite(auth, id, body.expectedRevision(), body.battleTag()));
+        return response(service.invite(auth, id, body.expectedRevision(), body.battleTag(), body.characterName()));
     }
     @PostMapping("/api/v1/me/group-invitations/{id}/accept")
     public ResponseEntity<GroupService.Group> accept(Authentication auth, @PathVariable UUID id) { return response(service.accept(auth, id)); }

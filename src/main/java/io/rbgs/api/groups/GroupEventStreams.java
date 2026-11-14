@@ -135,13 +135,15 @@ public class GroupEventStreams {
                     boolean initial = ready.getAndSet(false), changed = dirty.getAndSet(false), ping = heartbeat.getAndSet(false);
                     boolean membershipRemoved = removalNotice.getAndSet(false);
                     if (!initial && !changed && !ping && !membershipRemoved) break;
-                    if (ping && !access.valid(account, sessionId)) { finish(); break; }
+                    if ((initial || ping) && !access.valid(account, sessionId)) { finish(); break; }
+                    if (initial) lifecycle.invitationBrowserSeen(account, sessionId);
                     if (initial) emitter.send(SseEmitter.event().name("ready").reconnectTime(3000).data("{}"));
                     if (changed) emitter.send(SseEmitter.event().name("changed").data("{}"));
                     if (membershipRemoved) emitter.send(SseEmitter.event().name("removed").data("{}"));
                     if (ping) {
                         emitter.send(SseEmitter.event().name("ping").data("{}"));
                         lifecycle.browserSeen(account);
+                        if (!initial) lifecycle.invitationBrowserSeen(account, sessionId);
                     }
                 }
             } catch (IOException | RuntimeException disconnected) { finish(); }
